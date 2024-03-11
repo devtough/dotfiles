@@ -161,6 +161,7 @@ alias v="nvim"
 alias d="docker"
 alias g="git"
 alias cm="chezmoi"
+alias grep="rg"
 
 # Env vars
 
