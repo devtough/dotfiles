@@ -1,0 +1,5 @@
+[user]
+	email = egkatsuranis@ucdavis.edu
+	name = Evan Katsuranis
+[core]
+	editor = nvim

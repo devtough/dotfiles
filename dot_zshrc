@@ -165,7 +165,6 @@ alias grep="rg"
 
 # Env vars
 export ZVM_VI_EDITOR='nvim'
-export EDITOR='nvim'
 export AWS_DEFAULT_REGION=us-west-2
 
 PATH="$PATH:/Applications/WezTerm.app/Contents/MacOS"
