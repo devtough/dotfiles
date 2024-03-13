@@ -164,9 +164,9 @@ alias cm="chezmoi"
 alias grep="rg"
 
 # Env vars
-
-ZVM_VI_EDITOR='nvim'
-EDITOR='nvim'
+export ZVM_VI_EDITOR='nvim'
+export EDITOR='nvim'
+export AWS_DEFAULT_REGION=us-west-2
 
 PATH="$PATH:/Applications/WezTerm.app/Contents/MacOS"
 export PATH
@@ -178,7 +178,6 @@ source ~/.oh-my-zsh-completions/istioctl_completions.zsh
 source ~/.oh-my-zsh-completions/chezmoi.sh
 
 alias aws-login='aws sso login'
-AWS_DEFAULT_REGION=us-west-2
 
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 # Moved this to end to instant prompt which needs to be run after 
