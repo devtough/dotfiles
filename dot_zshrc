@@ -174,7 +174,8 @@ source ~/.oh-my-zsh-completions/eksctl.zsh
 source ~/.oh-my-zsh-completions/wezterm_shell_completion.zsh
 source ~/.oh-my-zsh-completions/k3d_shell_completion.zsh
 source ~/.oh-my-zsh-completions/istioctl_completions.zsh
-source ~/.oh-my-zsh-completions/chezmoi.sh
+source ~/.oh-my-zsh-completions/chezmoi.zsh
+source ~/.oh-my-zsh-completions/confluent.zsh
 
 alias aws-login='aws sso login'
 
