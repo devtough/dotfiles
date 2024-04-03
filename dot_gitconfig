@@ -3,3 +3,16 @@
 	name = Evan Katsuranis
 [core]
 	editor = nvim
+[diff]
+  tool = difftastic
+  external = difft # use for `git diff`
+[difftool]
+  prompt = false
+[difftool "difftastic"]
+  cmd = difft "$LOCAL" "$REMOTE"
+[pager]
+  difftool = true
+[alias]
+  # `git dlog` to show `git log -p` with difftastic.
+  dlog = "!f() { : git log ; GIT_EXTERNAL_DIFF=difft git log -p --ext-diff $@; }; f"
+  hist = log --pretty=format:'%C(yellow)[%ad]%C(reset) %C(green)[%h]%C(reset) | %C(red)%s %C(bold red){{%an}}%C(reset) %C(blue)%d%C(reset)' --graph --date=short
