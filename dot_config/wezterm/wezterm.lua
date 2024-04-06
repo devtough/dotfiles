@@ -6,21 +6,80 @@ if wezterm.config_builder then
 	config = wezterm.config_builder()
 end
 
-config.font = wezterm.font("MesloLGS NF")
-config.font_size = 20
+config.font = wezterm.font("JetBrains Mono", { Weight = "Bold" })
+config.font_size = 18
 config.max_fps = 150
 config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }
 
 config.color_scheme = "Dracula (Official)"
 
+config.window_decorations = "RESIZE"
+
+config.default_workspace = "~/Projects"
+
+-- Dracula Color Pallette
+-- from tmux for coloring tabs
+-- to match the tmux colors
+local white = "#f8f8f2"
+local gray = "#44475a"
+local dark_gray = "#282a36"
+local light_purple = "#bd93f9"
+local dark_purple = "#6272a4"
+local cyan = "#8be9fd"
+local green = "#50fa7b"
+local orange = "#ffb86c"
+local red = "#ff5555"
+local pink = "#ff79c6"
+local yellow = "#f1fa8c"
+
 config.use_fancy_tab_bar = false
 config.hide_tab_bar_if_only_one_tab = false
 config.show_new_tab_button_in_tab_bar = true
 config.tab_bar_at_bottom = false
+config.window_frame = {
+	font = wezterm.font({ family = "Roboto", weight = "Bold" }),
+	font_size = 18,
+	active_titlebar_bg = gray,
+	inactive_titlebar_bg = gray,
+}
+config.colors = {
+	tab_bar = {
+		background = gray,
+		active_tab = {
+			fg_color = white,
+			bg_color = dark_purple,
+		},
+		inactive_tab = {
+			bg_color = gray,
+			fg_color = white,
+		},
+	},
+}
 
-config.window_decorations = "RESIZE"
+-- This function returns the suggested title for a tab.
+-- It prefers the title that was set via `tab:set_title()`
+-- or `wezterm cli set-tab-title`, but falls back to the
+-- title of the active pane in that tab.
+function tab_title(tab_info)
+	local title = tab_info.tab_title
+	-- if the tab title is explicitly set, take that
+	if title and #title > 0 then
+		return title
+	end
+	-- if not, use active pane's process name
+	return wezterm.mux.get_pane(tab_info.active_pane.pane_id):get_foreground_process_info().name
+end
 
-config.default_workspace = "~/Projects"
+wezterm.on("format-tab-title", function(tab, tabs, panes, config, hover, max_width)
+	local title = " " .. tab.tab_index + 1 .. " " .. tab_title(tab) .. " "
+	if tab.is_active then
+		return {
+			{ Background = { Color = dark_purple } },
+			{ Text = title },
+		}
+	end
+	return title
+end)
 
 -- for wezterm <-> nvim integration
 local function is_vim(pane)
@@ -63,6 +122,8 @@ end
 
 config.keys = {
 	{ mods = "CMD", key = "c", action = nvim_copy_paste("copy") },
+	-- CTRL-SHIFT-l activates the debug overlay
+	{ key = "L", mods = "CTRL", action = wezterm.action.ShowDebugOverlay },
 }
 
 return config
