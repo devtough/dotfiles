@@ -33,9 +33,12 @@ local pink = "#ff79c6"
 local yellow = "#f1fa8c"
 
 config.use_fancy_tab_bar = false
-config.hide_tab_bar_if_only_one_tab = false
 config.show_new_tab_button_in_tab_bar = false
+
+-- hides/shows tab bar and sets it at the bottom
+config.hide_tab_bar_if_only_one_tab = true
 config.tab_bar_at_bottom = true
+
 -- could we replace other styling info above
 -- to a single map?
 --config.window_frame = {
