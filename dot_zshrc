@@ -177,6 +177,7 @@ source ~/.oh-my-zsh-completions/istioctl_completions.zsh
 source ~/.oh-my-zsh-completions/chezmoi.zsh
 source ~/.oh-my-zsh-completions/confluent.zsh
 source ~/.oh-my-zsh-completions/kustomize.zsh
+source ~/.oh-my-zsh-completions/rpk.zsh
 
 alias aws-login='aws sso login'
 
