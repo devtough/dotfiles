@@ -1,10 +1,11 @@
+# REMOVING, I think this relates to nix-env, not nix darwin.
 # see https://gist.github.com/meeech/0b97a86f235d10bc4e2a1116eec38e7e
 # an osx upgrade broke nix, adding this to see if it starts working agian
 # Nix
-if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
-  . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
-fi
-# End Nix
+#if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+#  . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+#fi
+## End Nix
 
 # to use direnv with Instant Prompt (comes with powerline10k)
 # these lines before and after powerline10k inits are needed
