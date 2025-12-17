@@ -83,3 +83,42 @@ Managed via `.chezmoiexternal.toml`:
 |-------|--------|
 | `fn+mouse1` | Move window |
 | `fn+mouse2` | Resize window |
+
+---
+
+## OSX Config Review (2025-12-17)
+
+Audit of local dotfiles not yet tracked by chezmoi.
+
+### High Priority - Recommended Additions
+
+| File | Description |
+|------|-------------|
+| `~/.yabairc` | Yabai window manager config |
+| `~/.config/skhd/skhdrc` | Hotkey daemon keybindings |
+| `~/.config/aerospace/aerospace.toml` | AeroSpace window manager |
+| `~/.config/ghostty/config` | Ghostty terminal (Ayu Mirage theme) |
+| `~/.hammerspoon/init.lua` | Hammerspoon automation |
+| `~/.config/jj/config.toml` | Jujutsu VCS config |
+| `~/.config/git/ignore` | Global gitignore |
+
+### Medium Priority - May Need Templating
+
+| File | Notes |
+|------|-------|
+| `~/.config/gh/config.yml` | GitHub CLI - check for tokens |
+| `~/.config/nix/` | Nix config (flake.nix, flake.lock) |
+| `~/.zprofile` | Minimal, Homebrew setup only |
+
+### Lower Priority
+
+| File | Notes |
+|------|-------|
+| `~/.config/rio/config.toml` | Rio terminal |
+| `~/.config/acli/` | Atlassian CLI - likely contains secrets |
+
+### Skip (Sensitive/Auto-generated)
+
+- `~/.aws/`, `~/.azure/`, `~/.kube/`, `~/.ssh/` - credentials
+- `~/.zsh_history`, `~/.bash_history` - history files
+- `~/.cache/`, `~/.local/share/` - cache data
