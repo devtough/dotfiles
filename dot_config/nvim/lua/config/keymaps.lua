@@ -27,3 +27,47 @@ vim.keymap.set("n", "<leader><leader>h", require("smart-splits").swap_buf_left)
 vim.keymap.set("n", "<leader><leader>j", require("smart-splits").swap_buf_down)
 vim.keymap.set("n", "<leader><leader>k", require("smart-splits").swap_buf_up)
 vim.keymap.set("n", "<leader><leader>l", require("smart-splits").swap_buf_right)
+
+-- run the current line in a floating terminal
+--vim.keymap.set("n", "<leader>rt", function()
+--  local current_line = vim.fn.getline(".")
+--  require("lazyvim.util").terminal({ current_line }, { cwd = vim.fn.getcwd() })
+--end, { desc = "Run current line in floating terminal" })
+
+local Snacks = require("snacks")
+
+-- Function to run shell command using snacks terminal
+local function run_current_line()
+  -- Get current line
+  local current_line = vim.api.nvim_get_current_line()
+
+  -- Trim whitespace
+  current_line = current_line:match("^%s*(.-)%s*$")
+
+  if current_line == "" then
+    vim.notify("Current line is empty", vim.log.levels.WARN)
+    return
+  end
+
+  -- Show notification that command is running
+  vim.notify("Running: " .. current_line, vim.log.levels.INFO)
+
+  -- Use snacks terminal to run the command
+  Snacks.terminal({
+    cmd = current_line,
+    title = "Shell Command: " .. current_line,
+    title_pos = "center",
+    width = 0.8,
+    height = 0.6,
+    border = "rounded",
+    backdrop = false,
+    enter = true,
+    keys = {
+      q = "close",
+      ["<esc>"] = "close",
+      ["<c-c>"] = "close",
+    },
+  })
+end
+
+vim.keymap.set("n", "<leader>rt", run_current_line, { desc = "Run current line in floating terminal" })
