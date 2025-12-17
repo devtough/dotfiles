@@ -187,3 +187,11 @@ alias aws-login='aws sso login'
 # any stdout (like warnings) to function correctly.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 
+
+
+# bun completions
+[ -s "/Users/ekat/.bun/_bun" ] && source "/Users/ekat/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
