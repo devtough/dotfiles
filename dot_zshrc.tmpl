@@ -168,11 +168,16 @@ alias grep="rg"
 export ZVM_VI_EDITOR='nvim'
 export AWS_DEFAULT_REGION=us-west-2
 
+{{ if eq .chezmoi.os "darwin" -}}
+# macOS-specific PATH additions
 PATH="$PATH:/Applications/WezTerm.app/Contents/MacOS"
+{{ end -}}
 export PATH
 
 source ~/.oh-my-zsh-completions/eksctl.zsh
+{{ if eq .chezmoi.os "darwin" -}}
 source ~/.oh-my-zsh-completions/wezterm_shell_completion.zsh
+{{ end -}}
 source ~/.oh-my-zsh-completions/k3d_shell_completion.zsh
 source ~/.oh-my-zsh-completions/istioctl_completions.zsh
 source ~/.oh-my-zsh-completions/chezmoi.zsh
@@ -190,7 +195,7 @@ alias aws-login='aws sso login'
 
 
 # bun completions
-[ -s "/Users/ekat/.bun/_bun" ] && source "/Users/ekat/.bun/_bun"
+[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
 
 # bun
 export BUN_INSTALL="$HOME/.bun"

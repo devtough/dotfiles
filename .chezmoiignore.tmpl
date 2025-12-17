@@ -1,0 +1,13 @@
+# Ignore oh-my-zsh cache on all systems
+.oh-my-zsh/cache/**
+
+{{ if eq .chezmoi.os "linux" }}
+# macOS-only files - ignore on Linux
+.config/wezterm/
+.oh-my-zsh-completions/wezterm_shell_completion.zsh
+{{ end }}
+
+{{ if eq .chezmoi.os "darwin" }}
+# Linux-only files - ignore on macOS
+# (add linux-specific configs here as needed)
+{{ end }}
