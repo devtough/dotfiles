@@ -50,3 +50,36 @@ Managed via `.chezmoiexternal.toml`:
 - zsh-syntax-highlighting
 - zsh-history-substring-search
 - tmux plugin manager (tpm)
+
+## Keyboard Shortcuts (macOS)
+
+### Hammerspoon - App Focus
+
+| Shortcut | Action |
+|----------|--------|
+| `ctrl+space` | WezTerm |
+| `ctrl+cmd+b` | Arc |
+| `ctrl+cmd+c` | VS Code |
+| `ctrl+cmd+o` | Obsidian |
+| `ctrl+cmd+s` | Slack |
+| `ctrl+cmd+n` | Notion |
+
+### Hammerspoon - Window Management
+
+| Shortcut | Action |
+|----------|--------|
+| `ctrl+cmd+r` | Maximize |
+| `ctrl+cmd+1` | Left 1/3 |
+| `ctrl+cmd+2` | Center 1/3 |
+| `ctrl+cmd+3` | Right 1/3 |
+| `ctrl+cmd+q` | Left 2/3 |
+| `ctrl+cmd+e` | Right 2/3 |
+| `ctrl+cmd+w` | Center 1/2 |
+| `ctrl+cmd+`` ` | Minimize all |
+
+### Yabai - Mouse
+
+| Input | Action |
+|-------|--------|
+| `fn+mouse1` | Move window |
+| `fn+mouse2` | Resize window |
