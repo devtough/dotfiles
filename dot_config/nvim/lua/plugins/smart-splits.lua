@@ -1,3 +1,4 @@
+-- for navigating between neovim and terminal panes
 return {
   {
     "mrjones2014/smart-splits.nvim",
