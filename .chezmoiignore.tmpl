@@ -1,13 +1,25 @@
+# Repo files - don't deploy to ~
+README.md
+truecolor-test.sh
+
 # Ignore oh-my-zsh cache on all systems
 .oh-my-zsh/cache/**
+
+# Nvim files that differ per machine (managed by lazy/omarchy)
+.config/nvim/lazy-lock.json
 
 {{ if eq .chezmoi.os "linux" }}
 # macOS-only files - ignore on Linux
 .config/wezterm/
-.oh-my-zsh-completions/wezterm_shell_completion.zsh
+.oh-my-zsh-completions/
+.zshrc
+.p10k.zsh
+.config/tmux/scripts/
 {{ end }}
 
 {{ if eq .chezmoi.os "darwin" }}
 # Linux-only files - ignore on macOS
-# (add linux-specific configs here as needed)
+.bashrc
+.bash_profile
+.config/ghostty/
 {{ end }}

@@ -1,0 +1,49 @@
+# See https://git-scm.com/docs/git-config
+
+[user]
+	name = Evan Katsuranis
+{{- if eq .chezmoi.os "darwin" }}
+	email = egkatsuranis@ucdavis.edu
+{{- else }}
+	email = egkatsuranis@gmail.com
+{{- end }}
+[core]
+	editor = nvim
+[init]
+	defaultBranch = main
+[pull]
+	rebase = true
+[push]
+	autoSetupRemote = true
+[diff]
+	algorithm = histogram
+	colorMoved = plain
+	mnemonicPrefix = true
+	tool = difftastic
+	external = difft
+[difftool]
+	prompt = false
+[difftool "difftastic"]
+	cmd = difft "$LOCAL" "$REMOTE"
+[pager]
+	difftool = true
+[commit]
+	verbose = true
+[column]
+	ui = auto
+[branch]
+	sort = -committerdate
+[tag]
+	sort = -version:refname
+[rerere]
+	enabled = true
+	autoupdate = true
+[fetch]
+	prune = true
+[alias]
+	co = checkout
+	br = branch
+	ci = commit
+	st = status
+	dlog = "!f() { : git log ; GIT_EXTERNAL_DIFF=difft git log -p --ext-diff $@; }; f"
+	hist = log --pretty=format:'%C(yellow)[%ad]%C(reset) %C(green)[%h]%C(reset) | %C(red)%s %C(bold red){{ "{{" }}%an{{ "}}" }}%C(reset) %C(blue)%d%C(reset)' --graph --date=short

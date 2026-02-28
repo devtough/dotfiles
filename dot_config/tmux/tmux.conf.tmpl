@@ -4,13 +4,15 @@ set -ag terminal-overrides ",xterm-256color:RGB"
 set -g mouse on
 
 # set shell
+{{ if eq .chezmoi.os "darwin" -}}
 set -g default-shell /bin/zsh
+{{ else -}}
+set -g default-shell /bin/bash
+{{ end -}}
 
-# auto renumber windows when on closes
+# auto renumber windows when one closes
 set-option -g renumber-windows on
 
-# for vim, also supports other cli utils 
-# that use ctrl + j or k
 # Smart pane switching with awareness of Vim splits.
 # See: https://github.com/christoomey/vim-tmux-navigator
 is_vim="ps -o state= -o comm= -t '#{pane_tty}' \
@@ -31,32 +33,26 @@ bind-key -T copy-mode-vi 'C-k' select-pane -U
 bind-key -T copy-mode-vi 'C-l' select-pane -R
 bind-key -T copy-mode-vi 'C-\' select-pane -l
 
-# could not get these to work, but they do work inside vim
-#bind -T copy-mode-vi M-k resize-pane -U 5  # Resizes pane upwards by 5 cells
-#bind -T copy-mode-vi M-j resize-pane -D 5 # Resizes pane downwards by 5 cells
-#bind -T copy-mode-vi M-h resize-pane -L 5 # Resizes pane left by 5 cells
-#bind -T copy-mode-vi M-l resize-pane -R 5 # Resizes pane right by 5 cells
-
 # increase history and set vi mode
 set-option -g history-limit 50000
 setw -g mode-keys vi
 unbind-key [
 bind-key C-v copy-mode
 
-# should unbind-key -a to unbind all
-# except the prefix key.
-# This sets the prefix key to Control A.
+# prefix key: Control A
 set-option -g prefix C-a
 
-# splt tmux panes
+# split tmux panes
 unbind-key -
 bind - split-window -v -c "#{pane_current_path}"
 unbind-key |
 bind | split-window -h -c "#{pane_current_path}"
 
 # =============================================================================
-# Ayu Mirage Theme (matching Ghostty)
+# Theme
 # =============================================================================
+{{ if eq .chezmoi.os "darwin" -}}
+# Ayu Mirage
 # Colors:
 #   bg:      #1f2430    fg:      #cbccc6
 #   accent:  #73d0ff    green:   #bae67e
@@ -64,18 +60,13 @@ bind | split-window -h -c "#{pane_current_path}"
 #   red:     #f28779    magenta: #d4bfff
 #   cyan:    #95e6cb    gray:    #5c6773
 
-# Status bar
 set -g status-style "bg=#1f2430,fg=#cbccc6"
 set -g status-interval 5
 set -g status-left-length 50
 set -g status-right-length 150
 
-# Status left - session name
 set -g status-left "#[bg=#73d0ff,fg=#1f2430,bold] #S #[bg=#1f2430,fg=#73d0ff]"
 
-# Status right - custom widgets
-# Note: AWS_PROFILE not shown here because tmux status bar is session-global,
-# but AWS_PROFILE is per-directory (via direnv). Show it in shell prompt instead.
 set -g status-right "\
 #[fg=#5c6773]│ \
 #[fg=#ffd580]CPU #(~/.config/tmux/scripts/cpu.sh) \
@@ -86,24 +77,55 @@ set -g status-right "\
 #[fg=#5c6773]│ \
 #[fg=#bae67e]RPK #(~/.config/tmux/scripts/rpk.sh) "
 
-# Window status
 set -g window-status-format "#[fg=#5c6773] #I:#W "
 set -g window-status-current-format "#[bg=#34455a,fg=#73d0ff,bold] #I:#W "
 set -g window-status-separator ""
 
-# Pane borders
 set -g pane-border-style "fg=#5c6773"
 set -g pane-active-border-style "fg=#73d0ff"
 
-# Message style
 set -g message-style "bg=#34455a,fg=#cbccc6"
 set -g message-command-style "bg=#34455a,fg=#cbccc6"
 
-# Mode style (copy mode, etc)
 set -g mode-style "bg=#34455a,fg=#cbccc6"
 
-# Clock
 set -g clock-mode-colour "#73d0ff"
+{{ else -}}
+# Rose Pine Dark
+# Colors:
+#   bg:      #191724    fg:      #e0def4
+#   accent:  #9ccfd8    green:   #31748f
+#   yellow:  #f6c177    red:     #eb6f92
+#   magenta: #c4a7e7    cyan:    #ebbcba
+#   gray:    #6e6a86    hl_bg:   #26233a
+
+set -g status-style "bg=#191724,fg=#e0def4"
+set -g status-interval 5
+set -g status-left-length 50
+set -g status-right-length 150
+
+set -g status-left "#[bg=#9ccfd8,fg=#191724,bold] #S #[bg=#191724,fg=#9ccfd8]"
+
+set -g status-right "\
+#[fg=#6e6a86]│ \
+#[fg=#c4a7e7]%a %b %d \
+#[fg=#6e6a86]│ \
+#[fg=#ebbcba]%H:%M "
+
+set -g window-status-format "#[fg=#6e6a86] #I:#W "
+set -g window-status-current-format "#[bg=#26233a,fg=#9ccfd8,bold] #I:#W "
+set -g window-status-separator ""
+
+set -g pane-border-style "fg=#6e6a86"
+set -g pane-active-border-style "fg=#9ccfd8"
+
+set -g message-style "bg=#26233a,fg=#e0def4"
+set -g message-command-style "bg=#26233a,fg=#e0def4"
+
+set -g mode-style "bg=#26233a,fg=#e0def4"
+
+set -g clock-mode-colour "#9ccfd8"
+{{ end -}}
 
 # =============================================================================
 # Plugins
@@ -111,9 +133,6 @@ set -g clock-mode-colour "#73d0ff"
 set -g @tpm_plugins ' \
   tmux-plugins/tpm \
 '
-# set -g @plugin 'tmux-plugins/tmux-resurrect'
-# set -g @plugin 'tmux-plugins/tmux-continuum'
 
 # Initialize TMUX plugin manager (keep this line at the very bottom of tmux.conf)
 run "$HOME/.config/tmux/plugins/tpm/tpm"
-
