@@ -95,18 +95,22 @@ ZSH_CUSTOM=~/.oh-my-zsh-custom
 # Standard plugins can be found in $ZSH/plugins/
 # Custom plugins may be added to $ZSH_CUSTOM/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
+#ZSH_TMUX_AUTOSTART=true
+#ZSH_TMUX_AUTOQUIT=true
+
 plugins=(
   gh
-  git
   docker
-  tmux
   zsh-history-substring-search
   aws
   zsh-syntax-highlighting
-  terraform
   kubectl
   helm
+  voice-command
 )
+# tmux plugin aliases tmux -> _zsh_tmux_plugin_run, which breaks in Claude Code's
+# shell snapshot -- only load it for real interactive sessions
+[[ -z "$CLAUDECODE" ]] && plugins+=(tmux)
 # Add wisely, as too many plugins slow down shell startup.
 
 source $ZSH/oh-my-zsh.sh
@@ -131,12 +135,14 @@ bindkey -r '^j'
 bindkey -M viins 'jk' vi-cmd-mode
 
 # set git commits to use nvim
+export EDITOR=nvim
 export GIT_EDITOR=nvim
 
 # export MANPATH="/usr/local/man:$MANPATH"
 
 # You may need to manually set your language environment
-# export LANG=en_US.UTF-8
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
 
 # Preferred editor for local and remote sessions
 # if [[ -n $SSH_CONNECTION ]]; then
@@ -160,9 +166,10 @@ alias vim="nvim"
 alias vi="nvim"
 alias v="nvim"
 alias d="docker"
-alias g="git"
 alias cm="chezmoi"
 alias grep="rg"
+alias g="glow -p"
+mkcd() { mkdir -p "$1" && cd "$1"; }
 
 # Env vars
 export ZVM_VI_EDITOR='nvim'
@@ -170,15 +177,17 @@ export AWS_DEFAULT_REGION=us-west-2
 
 export PATH
 
-source ~/.oh-my-zsh-completions/eksctl.zsh
-source ~/.oh-my-zsh-completions/k3d_shell_completion.zsh
-source ~/.oh-my-zsh-completions/istioctl_completions.zsh
-source ~/.oh-my-zsh-completions/chezmoi.zsh
-source ~/.oh-my-zsh-completions/confluent.zsh
-source ~/.oh-my-zsh-completions/kustomize.zsh
-source ~/.oh-my-zsh-completions/rpk.zsh
+# Source all custom completions
+for f in ~/.oh-my-zsh-completions/*.zsh; do
+  source "$f"
+done
 
 alias aws-login='aws sso login'
+
+# ccusage aliases
+alias ccusage-today='npx ccusage@latest daily --since $(date +%Y%m%d)'
+alias ccusage-week='npx ccusage@latest daily --since $(date -v-$(($(date +%u)-1))d +%Y%m%d)'
+alias ccusage-month='npx ccusage@latest daily --since $(date -v1d +%Y%m%d)'
 
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 # Moved this to end to instant prompt which needs to be run after 
@@ -193,3 +202,18 @@ alias aws-login='aws sso login'
 # bun
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
+
+# User-writable npm global installs, even when node/npm come from Nix.
+export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
+
+# yazi: `y` launches yazi and cd's to the last dir on quit (q)
+function y() {
+	local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+	yazi "$@" --cwd-file="$tmp"
+	IFS= read -r -d '' cwd < "$tmp"
+	[ -n "$cwd" ] && [ "$cwd" != "$PWD" ] && builtin cd -- "$cwd"
+	rm -f -- "$tmp"
+}
+export AWS_PAGER=""

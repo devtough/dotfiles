@@ -1,11 +1,24 @@
 set -g default-terminal "tmux-256color"
 set -ag terminal-overrides ",xterm-256color:RGB"
+set -ag terminal-features 'xterm-ghostty:UTF-8:RGB'
+
+# Claude Code compatibility
+set -g focus-events on       # pass focus events to TUI apps (fixes Claude Code scroll/cursor glitches in tmux)
+set -g allow-passthrough on  # let escape sequences reach outer terminal (Claude Code notifications, progress bar)
+set -sg escape-time 0        # remove ESC delay (faster vim mode switching)
 
 set -g mouse on
+
+# switch to another session instead of detaching when session/window is killed
+set -g detach-on-destroy off
 
 # set shell
 {{ if eq .chezmoi.os "darwin" -}}
 set -g default-shell /bin/zsh
+# Run it as a login shell so /etc/zprofile -> path_helper runs and /usr/bin
+# (sudo, dig, dscacheutil, ...) ends up in PATH. Without this every pane
+# inherits whatever PATH the tmux server was started with — usually broken.
+set -g default-command "${SHELL} -l"
 {{ else -}}
 set -g default-shell /bin/bash
 {{ end -}}
@@ -33,6 +46,12 @@ bind-key -T copy-mode-vi 'C-k' select-pane -U
 bind-key -T copy-mode-vi 'C-l' select-pane -R
 bind-key -T copy-mode-vi 'C-\' select-pane -l
 
+# Alt+hjkl: resize panes by 1
+bind -n M-k resize-pane -U 1
+bind -n M-j resize-pane -D 1
+bind -n M-h resize-pane -L 1
+bind -n M-l resize-pane -R 1
+
 # increase history and set vi mode
 set-option -g history-limit 50000
 setw -g mode-keys vi
@@ -42,11 +61,79 @@ bind-key C-v copy-mode
 # prefix key: Control A
 set-option -g prefix C-a
 
+{{ if eq .chezmoi.os "darwin" -}}
+# copy current pane's working directory to clipboard
+bind y run-shell "tmux display-message -p '#{pane_current_path}' | pbcopy && tmux display-message 'Copied: #{pane_current_path}'"
+
+{{ end -}}
 # split tmux panes
 unbind-key -
 bind - split-window -v -c "#{pane_current_path}"
 unbind-key |
 bind | split-window -h -c "#{pane_current_path}"
+
+# split with Claude Code (--dangerously-skip-permissions)
+bind _ split-window -v -c "#{pane_current_path}" "claude --dangerously-skip-permissions --chrome"
+bind '\' split-window -h -c "#{pane_current_path}" "claude --dangerously-skip-permissions --chrome"
+
+# new windows open in current pane's directory
+bind c new-window -c "#{pane_current_path}"
+
+# -----------------------------------------------------------------------------
+# fzf / scratch popups. All guarded by the server-global @popup_open flag so
+# only ONE is open at a time: a binding refuses while the flag is set, sets it
+# on open, and clears it when the popup's command exits (covers fzf-cancel,
+# detach, and exit). If popups ever stop opening after a hard kill, reset with:
+#     tmux set -g @popup_open 0
+# -----------------------------------------------------------------------------
+
+# Fuzzy-JUMP to any window across ALL sessions, then switch to it (prefix + j).
+# First field of each line is the session:window target; switch-client hops
+# sessions + selects the window in one shot.
+bind j if-shell -F '#{@popup_open}' {
+    display-message 'a popup is already open'
+} {
+    set -g @popup_open 1
+    display-popup -E -w 70% -h 70% "tmux list-windows -a -F '#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]' | fzf --reverse --no-sort --preview 'tmux capture-pane -ep -t {1}' --preview-window=down:60% | awk '{print \$1}' | xargs -r tmux switch-client -t ; tmux set -g @popup_open 0"
+}
+
+# Dedicated 'claude' scratch session in a popup, TOGGLE (prefix + C-p).
+# Press from anywhere to open; press again inside it to close (detach). Hold as
+# many conversations as you like as windows inside it (C-a c / C-a n/p).
+# detach-on-destroy on (set per-open) means typing `exit` in the last window
+# closes the popup cleanly instead of switching to a stray session.
+bind C-p if-shell -F '#{==:#{session_name},claude}' {
+    detach-client
+} {
+    if-shell -F '#{@popup_open}' {
+        display-message 'a popup is already open'
+    } {
+        set -g @popup_open 1
+        display-popup -w 85% -h 85% -E "tmux new-session -d -s claude 2>/dev/null; tmux set-option -t claude detach-on-destroy on; TMUX= tmux attach -t claude; tmux set -g @popup_open 0"
+    }
+}
+
+# Fuzzy-PEEK any window in a popup, then detach to close (prefix + P).
+# Same picker as 'prefix j', but attaches a throwaway client in the popup
+# instead of switching. Detach (C-a d) and your underlying window is unchanged
+# — as long as the target lives in a session you're not currently viewing.
+bind P if-shell -F '#{@popup_open}' {
+    display-message 'a popup is already open'
+} {
+    set -g @popup_open 1
+    display-popup -w 85% -h 85% -E 'target=$(tmux list-windows -a -F "#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]" | fzf --reverse --no-sort --preview "tmux capture-pane -ep -t {1}" --preview-window=down:60% | awk "{print \$1}"); [ -n "$target" ] && tmux select-window -t "$target" && TMUX= tmux attach -t "${target%%:*}" ; tmux set -g @popup_open 0'
+}
+
+# Fuzzy-switch by AGENT STATE across all sessions (prefix + a).
+# Same picker UX as 'prefix j', but rows come from vox (:8282, attention-ranked:
+# blocked > done-unseen > working > idle) and show live state
+# (▲blocked ✓done ●working ○idle). Successor to agent-tracker's agent-switch.
+bind a if-shell -F '#{@popup_open}' {
+    display-message 'a popup is already open'
+} {
+    set -g @popup_open 1
+    display-popup -E -w 80% -h 70% "$HOME/Sandbox/2026-06-11-collab-orchestrator/bin/vox-switch ; tmux set -g @popup_open 0"
+}
 
 # =============================================================================
 # Theme
