@@ -160,12 +160,15 @@ bind P if-shell -F '#{@popup_open}' {
 # Same picker UX as 'prefix j', but rows come from vox (:8282, attention-ranked:
 # blocked > done-unseen > working > idle) and show live state
 # (▲blocked ✓done ●working ○idle). Successor to agent-tracker's agent-switch.
-bind a if-shell -F '#{@popup_open}' {
-    display-message 'a popup is already open'
-} {
-    set -g @popup_open 1
-    display-popup -E -w 80% -h 70% "$HOME/Sandbox/2026-06-11-collab-orchestrator/bin/vox-switch ; tmux set -g @popup_open 0"
-}
+# DISABLED 2026-08-04: vox moved off this machine (repo: github.com/devtough/vox,
+# local dirs archived in ~/Sandbox/2026-08-04-archive). To re-enable, point the
+# display-popup at a live checkout's bin/vox-switch.
+#bind a if-shell -F '#{@popup_open}' {
+#    display-message 'a popup is already open'
+#} {
+#    set -g @popup_open 1
+#    display-popup -E -w 80% -h 70% "<path-to-vox>/bin/vox-switch ; tmux set -g @popup_open 0"
+#}
 
 {{ end -}}
 # =============================================================================
