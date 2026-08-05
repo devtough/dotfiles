@@ -1,0 +1,32 @@
+#!/bin/bash
+# Setup pre-commit hooks for the chezmoi source directory
+
+CHEZMOI_SOURCE="{{ .chezmoi.sourceDir }}"
+HOOK_FILE="$CHEZMOI_SOURCE/.git/hooks/pre-commit"
+
+echo "Installing pre-commit hook in chezmoi source directory..."
+
+cat > "$HOOK_FILE" << 'HOOK'
+#!/usr/bin/env bash
+# Custom pre-commit hook for secret scanning with gitleaks
+
+if command -v pre-commit &> /dev/null; then
+    exec pre-commit run --config=.pre-commit-config.yaml gitleaks
+else
+    echo ""
+    echo "WARNING: pre-commit is not installed."
+    echo "Secret scanning with gitleaks will be skipped."
+    echo ""
+    read -p "Continue without secret scanning? [y/N] " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        exit 0
+    else
+        echo "Commit aborted. Install pre-commit and try again."
+        exit 1
+    fi
+fi
+HOOK
+
+chmod +x "$HOOK_FILE"
+echo "Done. Commits will be scanned for secrets (if pre-commit is installed)."

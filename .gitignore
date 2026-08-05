@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
+\#*\#
+.#*
+
+# IDE directories
+.idea/
+.vscode/
+*.code-workspace
+
+# Local development
+.envrc
+.env
+.env.*
+
+# Secrets (never commit these)
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.p12
+*.pfx
+
+# Chezmoi local files
+.chezmoiroot

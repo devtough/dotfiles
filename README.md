@@ -34,6 +34,16 @@ chezmoi add ~/.config/foo    # track a new file
 chezmoi update               # pull and apply from remote
 ```
 
+## Security
+
+This repo uses [gitleaks](https://github.com/gitleaks/gitleaks) via [pre-commit](https://pre-commit.com/) to scan for secrets before commits. If `pre-commit` is installed, hooks are set up automatically on first `chezmoi apply`.
+
+To install pre-commit:
+```bash
+brew install pre-commit   # macOS
+pip install pre-commit    # or via pip
+```
+
 ## What's Included
 
 | Config | Notes |
