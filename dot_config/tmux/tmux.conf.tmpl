@@ -1,5 +1,6 @@
 set -g default-terminal "tmux-256color"
 set -ag terminal-overrides ",xterm-256color:RGB"
+{{ if eq .chezmoi.os "darwin" -}}
 set -ag terminal-features 'xterm-ghostty:UTF-8:RGB'
 
 # Claude Code compatibility
@@ -12,6 +13,17 @@ set -g mouse on
 # switch to another session instead of detaching when session/window is killed
 set -g detach-on-destroy off
 
+{{ else }}
+set -g mouse on
+
+# Clipboard / extended keys (omarchy defaults the migration couldn't insert)
+set -g allow-passthrough on
+set -g set-clipboard on
+set -g extended-keys on
+set -g extended-keys-format csi-u
+set -sg escape-time 10
+
+{{ end -}}
 # set shell
 {{ if eq .chezmoi.os "darwin" -}}
 set -g default-shell /bin/zsh
@@ -46,18 +58,37 @@ bind-key -T copy-mode-vi 'C-k' select-pane -U
 bind-key -T copy-mode-vi 'C-l' select-pane -R
 bind-key -T copy-mode-vi 'C-\' select-pane -l
 
+{{ if eq .chezmoi.os "darwin" -}}
 # Alt+hjkl: resize panes by 1
 bind -n M-k resize-pane -U 1
 bind -n M-j resize-pane -D 1
 bind -n M-h resize-pane -L 1
 bind -n M-l resize-pane -R 1
 
+{{ end -}}
 # increase history and set vi mode
 set-option -g history-limit 50000
 setw -g mode-keys vi
 unbind-key [
+{{ if eq .chezmoi.os "darwin" -}}
 bind-key C-v copy-mode
 
+{{ else -}}
+bind-key v copy-mode
+
+# vim-style selection + yank to the system clipboard (Wayland: wl-copy)
+bind-key -T copy-mode-vi v   send-keys -X begin-selection
+bind-key -T copy-mode-vi C-v send-keys -X rectangle-toggle
+bind-key -T copy-mode-vi y   send-keys -X copy-pipe-and-cancel "wl-copy"
+# Y = "yy": yank the whole current line
+bind-key -T copy-mode-vi Y   send-keys -X start-of-line \; \
+                             send-keys -X begin-selection \; \
+                             send-keys -X end-of-line \; \
+                             send-keys -X copy-pipe-and-cancel "wl-copy"
+# also send mouse-drag selections to wl-copy
+bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel "wl-copy"
+
+{{ end -}}
 # prefix key: Control A
 set-option -g prefix C-a
 
@@ -72,6 +103,7 @@ bind - split-window -v -c "#{pane_current_path}"
 unbind-key |
 bind | split-window -h -c "#{pane_current_path}"
 
+{{ if eq .chezmoi.os "darwin" -}}
 # split with Claude Code (--dangerously-skip-permissions)
 bind _ split-window -v -c "#{pane_current_path}" "claude --dangerously-skip-permissions --chrome"
 bind '\' split-window -h -c "#{pane_current_path}" "claude --dangerously-skip-permissions --chrome"
@@ -135,6 +167,7 @@ bind a if-shell -F '#{@popup_open}' {
     display-popup -E -w 80% -h 70% "$HOME/Sandbox/2026-06-11-collab-orchestrator/bin/vox-switch ; tmux set -g @popup_open 0"
 }
 
+{{ end -}}
 # =============================================================================
 # Theme
 # =============================================================================
@@ -178,40 +211,10 @@ set -g mode-style "bg=#34455a,fg=#cbccc6"
 
 set -g clock-mode-colour "#73d0ff"
 {{ else -}}
-# Rose Pine Dark
-# Colors:
-#   bg:      #191724    fg:      #e0def4
-#   accent:  #9ccfd8    green:   #31748f
-#   yellow:  #f6c177    red:     #eb6f92
-#   magenta: #c4a7e7    cyan:    #ebbcba
-#   gray:    #6e6a86    hl_bg:   #26233a
-
-set -g status-style "bg=#191724,fg=#e0def4"
-set -g status-interval 5
-set -g status-left-length 50
-set -g status-right-length 150
-
-set -g status-left "#[bg=#9ccfd8,fg=#191724,bold] #S #[bg=#191724,fg=#9ccfd8]"
-
-set -g status-right "\
-#[fg=#6e6a86]│ \
-#[fg=#c4a7e7]%a %b %d \
-#[fg=#6e6a86]│ \
-#[fg=#ebbcba]%H:%M "
-
-set -g window-status-format "#[fg=#6e6a86] #I:#W "
-set -g window-status-current-format "#[bg=#26233a,fg=#9ccfd8,bold] #I:#W "
-set -g window-status-separator ""
-
-set -g pane-border-style "fg=#6e6a86"
-set -g pane-active-border-style "fg=#9ccfd8"
-
-set -g message-style "bg=#26233a,fg=#e0def4"
-set -g message-command-style "bg=#26233a,fg=#e0def4"
-
-set -g mode-style "bg=#26233a,fg=#e0def4"
-
-set -g clock-mode-colour "#9ccfd8"
+# Colors are auto-generated from the active omarchy palette by
+# ~/.config/omarchy/hooks/theme-set into omarchy-theme.conf (sourced below),
+# and regenerated on every `omarchy theme set`. Don't hand-edit the colors here.
+source-file ~/.config/tmux/omarchy-theme.conf
 {{ end -}}
 
 # =============================================================================

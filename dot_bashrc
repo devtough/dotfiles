@@ -6,6 +6,7 @@
 source ~/.local/share/omarchy/default/bash/rc
 
 # Add your own exports, aliases, and functions here.
+
 #
 # Make an alias for invoking commands you use constantly
 # alias p='python'
@@ -15,3 +16,12 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # direnv
 eval "$(direnv hook bash)"
+
+# remote tmux
+alias rss-tmux='setsid ghostty -e ssh ekat@rss-mac -t "tmux -u attach || tmux -u new" &>/dev/null &'
+
+# herdr: scrub tmux env so a manual launch inside tmux can't poison the
+# daemonized server (leaked TMUX breaks the nvim smart-splits herdr guard)
+herdr() {
+  env -u TMUX -u TMUX_PANE -u TERM_PROGRAM "$HOME/.local/bin/herdr" "$@"
+}
