@@ -1,0 +1,23 @@
+# A user ~/.inputrc replaces /etc/inputrc, so pull the system defaults back in
+$include /etc/inputrc
+
+# Vi editing mode (bash equivalent of zsh's `bindkey -v`)
+set editing-mode vi
+
+# Indicate mode via cursor shape (DECSCUSR): bar in insert, block in command
+set show-mode-in-prompt on
+set vi-ins-mode-string "\1\e[6 q\2"
+set vi-cmd-mode-string "\1\e[2 q\2"
+
+$if mode=vi
+set keymap vi-insert
+# jk to leave insert mode (equivalent of `bindkey -M viins 'jk' vi-cmd-mode`)
+"jk": vi-movement-mode
+# prefix history search, matching zsh's ^p/^n substring search
+"\C-p": history-search-backward
+"\C-n": history-search-forward
+
+set keymap vi-command
+"\C-p": history-search-backward
+"\C-n": history-search-forward
+$endif
