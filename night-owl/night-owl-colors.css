@@ -1,0 +1,112 @@
+/* Night Owl color overlay — generated from the omarchy night-owl palette.
+   Drop into <vault>/.obsidian/snippets/ and enable in Appearance -> CSS snippets.
+   NOTE: if this vault syncs from the Linux box, omarchy-colors.css already exists
+   there and follows the Linux theme — enable one or the other, not both. */
+.theme-dark, .theme-light {
+  --background-primary: #011627;
+  --background-primary-alt: #011627;
+  --background-secondary: #011627;
+  --background-secondary-alt: #01111e;
+  --background-modifier-border: #1d3b53;
+  --background-modifier-form-field: #011627;
+  --background-modifier-form-field-highlighted: #1d3b53;
+  --background-modifier-box-shadow: rgba(0, 0, 0, 0.3);
+
+  --text-normal: #d6deeb;
+  --text-muted: #687686;
+  --text-faint: #415262;
+  --text-on-accent: #011627;
+  --text-error: #ef5350;
+  --text-success: #22da6e;
+  --text-selection: #1d3b53;
+  --text-accent: #82aaff;
+  --text-accent-hover: #93b5ff;
+
+  --interactive-normal: #011627;
+  --interactive-hover: #1d3b53;
+  --interactive-accent: #82aaff;
+  --interactive-accent-hover: #93b5ff;
+  --interactive-success: #22da6e;
+
+  --scrollbar-bg: #011627;
+  --scrollbar-thumb-bg: #1d3b53;
+  --scrollbar-active-thumb-bg: #575656;
+
+  --color-accent: #82aaff;
+  --color-accent-1: #c5e478;
+  --color-accent-2: #c792ea;
+
+  --link-color: #82aaff;
+  --link-color-hover: #93b5ff;
+  --link-external-color: #21c7a8;
+  --link-unresolved-color: #c792ea;
+
+  --tag-color: #21c7a8;
+  --tag-color-hover: #c792ea;
+
+  --h1-color: #ef5350;
+  --h2-color: #22da6e;
+  --h3-color: #c5e478;
+  --h4-color: #82aaff;
+  --h5-color: #c792ea;
+  --h6-color: #c792ea;
+
+  --code-normal: #d6deeb;
+  --code-background: #011627;
+  --code-comment: #415262;
+  --code-function: #c5e478;
+  --code-keyword: #ef5350;
+  --code-string: #22da6e;
+  --code-tag: #82aaff;
+  --code-value: #c792ea;
+
+  --graph-line: #1d3b53;
+  --graph-node: #82aaff;
+  --graph-node-unresolved: #415262;
+  --graph-node-focused: #21c7a8;
+  --graph-node-tag: #c5e478;
+  --graph-node-attachment: #c792ea;
+
+  --blockquote-border-color: #1d3b53;
+  --table-header-background: #011627;
+  --table-row-background-hover: #1d3b53;
+  --hr-color: #1d3b53;
+
+  --checkbox-color: #82aaff;
+  --checkbox-color-hover: #93b5ff;
+  --checkbox-border-color: #415262;
+
+  --nav-item-color: #d6deeb;
+  --nav-item-color-hover: #82aaff;
+  --nav-item-color-active: #21c7a8;
+  --nav-item-background-hover: #011627;
+  --nav-item-background-active: #1d3b53;
+
+  --tab-text-color: #415262;
+  --tab-text-color-focused: #d6deeb;
+  --tab-text-color-focused-active: #82aaff;
+  --tab-background-active: #011627;
+
+  --titlebar-background: #011627;
+  --titlebar-background-focused: #011627;
+  --status-bar-background: #011627;
+  --status-bar-text-color: #415262;
+  --modal-background: #011627;
+  --modal-border-color: #1d3b53;
+  --prompt-border-color: #1d3b53;
+  --cursor-color: #80a4c2;
+
+  --tab-container-background: #011627;
+  --divider-color: #1d3b53;
+  --ribbon-background: #011627;
+}
+.theme-dark strong, .theme-light strong, .theme-dark .cm-strong, .theme-light .cm-strong { color: #c5e478; }
+.theme-dark em, .theme-light em, .theme-dark .cm-em, .theme-light .cm-em { color: #c792ea; }
+.theme-dark ::selection, .theme-light ::selection { background-color: #1d3b53; }
+.workspace-tab-header-container { background-color: #011627 !important; }
+.workspace-tabs { background-color: #011627 !important; }
+.workspace-ribbon { background-color: #011627 !important; }
+.mod-root .workspace-tab-header-container { background-color: #011627 !important; border-bottom: 1px solid #1d3b53 !important; }
+.workspace-split.mod-root > .workspace-tabs { background-color: #011627 !important; }
+.titlebar { background-color: #011627 !important; }
+.workspace-tab-header-spacer { background-color: #011627 !important; }

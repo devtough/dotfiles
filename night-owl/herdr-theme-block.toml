@@ -1,0 +1,11 @@
+# Night Owl for herdr — appended to the END of ~/.config/herdr/config.toml by
+# install.sh. The hand-maintained portion must not define [theme]/[theme.custom].
+# ANSI colors come from the terminal, so with Ghostty on "theme = Night Owl"
+# herdr's base colors follow automatically; accent is the one non-ANSI role.
+
+[theme]
+name = "terminal"    # render via the ANSI palette -> follows Ghostty's Night Owl
+
+[theme.custom]
+panel_bg = "reset"   # transparent to the terminal background
+accent = "#82aaff"

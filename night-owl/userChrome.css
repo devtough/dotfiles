@@ -1,0 +1,69 @@
+/* Night Owl for Zen Browser — generated from the omarchy night-owl palette.
+ * macOS: ~/Library/Application Support/zen/Profiles/<profile>/chrome/userChrome.css
+ * Requires toolkit.legacyUserProfileCustomizations.stylesheets = true, and a Zen restart.
+ */
+:root {
+  --zen-primary-color: #82aaff !important;
+  --zen-colors-primary: #82aaff !important;
+  --zen-colors-secondary: #1d3b53 !important;
+  --zen-colors-tertiary: #011627 !important;
+
+  --toolbar-bgcolor: #011627 !important;
+  --toolbar-color: #d6deeb !important;
+  --lwt-accent-color: #011627 !important;
+  --lwt-text-color: #d6deeb !important;
+
+  --tab-selected-bgcolor: #1d3b53 !important;
+  --tab-selected-textcolor: #d6deeb !important;
+  --tabpanel-background-color: #011627 !important;
+  --tab-loading-fill: #82aaff !important;
+
+  --zen-sidebar-background: #011627 !important;
+  --sidebar-background-color: #011627 !important;
+  --sidebar-text-color: #d6deeb !important;
+
+  --urlbar-box-bgcolor: #1d3b53 !important;
+  --urlbar-box-text-color: #d6deeb !important;
+  --urlbar-box-hover-bgcolor: #575656 !important;
+  --urlbar-box-focus-bgcolor: #1d3b53 !important;
+
+  --arrowpanel-background: #011627 !important;
+  --arrowpanel-color: #d6deeb !important;
+  --arrowpanel-border-color: #575656 !important;
+  --panel-background: #011627 !important;
+  --panel-color: #d6deeb !important;
+
+  --lwt-toolbar-field-highlight: #82aaff !important;
+  --lwt-toolbar-field-highlight-text: #011627 !important;
+
+  --focus-outline-color: #82aaff !important;
+  --button-primary-bgcolor: #82aaff !important;
+  --button-primary-hover-bgcolor: #93b5ff !important;
+  --button-primary-active-bgcolor: #a5c1ff !important;
+  --button-primary-color: #011627 !important;
+
+  --zen-main-browser-background: #011627 !important;
+  --zen-themed-toolbar-bg: #011627 !important;
+  --zen-dialog-background: #011627 !important;
+}
+
+#navigator-toolbox { background-color: #011627 !important; border-color: #1d3b53 !important; }
+#tabbrowser-tabs { background-color: #011627 !important; }
+.tabbrowser-tab { color: #d6deeb !important; }
+.tabbrowser-tab[selected] { background-color: #1d3b53 !important; color: #d6deeb !important; }
+.tabbrowser-tab:hover:not([selected]) { background-color: #575656 !important; }
+#sidebar-box { background-color: #011627 !important; color: #d6deeb !important; }
+#urlbar { background-color: #1d3b53 !important; color: #d6deeb !important; }
+#urlbar:focus-within { border-color: #82aaff !important; }
+#urlbar-input { color: #d6deeb !important; }
+#PersonalToolbar { background-color: #011627 !important; color: #d6deeb !important; }
+menupopup { --panel-background: #011627 !important; --panel-color: #d6deeb !important; background-color: #011627 !important; color: #d6deeb !important; }
+menuitem:hover, menu:hover { background-color: #1d3b53 !important; color: #d6deeb !important; }
+menuitem[_moz-menuactive="true"], menu[_moz-menuactive="true"] { background-color: #82aaff !important; color: #011627 !important; }
+* { scrollbar-color: #575656 #011627 !important; }
+findbar { background-color: #011627 !important; color: #d6deeb !important; }
+toolbarbutton { color: #d6deeb !important; }
+toolbarbutton:hover { background-color: #1d3b53 !important; }
+#zen-sidebar-box-container { background-color: #011627 !important; }
+#zen-sidebar-web-panel { background-color: #011627 !important; }
+.zen-workspace-indicator { background-color: #82aaff !important; }
