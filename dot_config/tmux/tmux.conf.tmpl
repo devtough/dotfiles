@@ -237,9 +237,30 @@ source-file ~/.config/tmux/omarchy-theme.conf
 # =============================================================================
 # Plugins
 # =============================================================================
-set -g @tpm_plugins ' \
-  tmux-plugins/tpm \
-'
+# Checkouts are managed by chezmoi (.chezmoiexternal.toml.tmpl), not by
+# `prefix + I` — tpm only sources what is already on disk. Declared with the
+# modern @plugin form; the old @tpm_plugins variable is deprecated upstream.
+set -g @plugin 'tmux-plugins/tpm'
+set -g @plugin 'tmux-plugins/tmux-resurrect'
+set -g @plugin 'tmux-plugins/tmux-continuum'   # must be declared after resurrect
+
+# --- persistence across server restarts and reboots --------------------------
+# resurrect saves the session/window/pane tree with per-pane cwd; continuum runs
+# it on a timer and replays the last save when the server starts.
+#
+# capture-pane-contents replays scrollback into restored panes. It captures up
+# to 'history-limit' (50000 above) per pane on every save, and resurrect never
+# prunes ~/.local/share/tmux/resurrect — sweep it occasionally:
+#     find ~/.local/share/tmux/resurrect -mtime +14 -delete
+set -g @resurrect-capture-pane-contents 'on'
+set -g @resurrect-strategy-nvim 'session'
+set -g @continuum-save-interval '5'            # minutes; upstream default is 15
+set -g @continuum-restore 'on'
+
+# Process restore is left at resurrect's defaults, which is a conservative list:
+# vi vim nvim emacs man less more tail top htop irssi weechat mutt. Anything
+# else -- claude, ssh, dev servers -- comes back as a plain shell in the right
+# directory. Add to that with @resurrect-processes.
 
 # Initialize TMUX plugin manager (keep this line at the very bottom of tmux.conf)
 run "$HOME/.config/tmux/plugins/tpm/tpm"

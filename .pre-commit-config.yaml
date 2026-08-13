@@ -3,3 +3,11 @@ repos:
     rev: v8.30.1
     hooks:
       - id: gitleaks
+
+  # Same engine as typos-lsp in Neovim, so the editor and the commit hook agree
+  # on what counts as a typo. Add project jargon to a _typos.toml at the repo
+  # root under [default.extend-words].
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.49.0
+    hooks:
+      - id: typos

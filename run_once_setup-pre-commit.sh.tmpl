@@ -8,16 +8,18 @@ echo "Installing pre-commit hook in chezmoi source directory..."
 
 cat > "$HOOK_FILE" << 'HOOK'
 #!/usr/bin/env bash
-# Custom pre-commit hook for secret scanning with gitleaks
+# Custom pre-commit hook: gitleaks secret scanning + typos spell checking.
+# No hook id is passed, so every hook in .pre-commit-config.yaml runs -- naming
+# one here silently skipped the rest.
 
 if command -v pre-commit &> /dev/null; then
-    exec pre-commit run --config=.pre-commit-config.yaml gitleaks
+    exec pre-commit run --config=.pre-commit-config.yaml
 else
     echo ""
     echo "WARNING: pre-commit is not installed."
-    echo "Secret scanning with gitleaks will be skipped."
+    echo "Secret scanning and spell checking will be skipped."
     echo ""
-    read -p "Continue without secret scanning? [y/N] " -n 1 -r
+    read -p "Continue without these checks? [y/N] " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         exit 0
@@ -29,4 +31,4 @@ fi
 HOOK
 
 chmod +x "$HOOK_FILE"
-echo "Done. Commits will be scanned for secrets (if pre-commit is installed)."
+echo "Done. Commits will be scanned for secrets and typos (if pre-commit is installed)."

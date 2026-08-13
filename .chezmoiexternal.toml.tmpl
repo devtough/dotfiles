@@ -37,3 +37,20 @@
     exact = true
     stripComponents = 1
     refreshPeriod = "168h"
+
+# Session persistence. Managed here rather than through `prefix + I` so a fresh
+# machine gets them from `chezmoi apply` alone. Declared in tmux.conf via
+# @plugin so tpm sources them.
+[".config/tmux/plugins/tmux-resurrect"]
+    type = "git-repo"
+    url = "https://github.com/tmux-plugins/tmux-resurrect.git"
+    exact = true
+    stripComponents = 1
+    refreshPeriod = "168h"
+
+[".config/tmux/plugins/tmux-continuum"]
+    type = "git-repo"
+    url = "https://github.com/tmux-plugins/tmux-continuum.git"
+    exact = true
+    stripComponents = 1
+    refreshPeriod = "168h"
