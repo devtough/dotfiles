@@ -1,0 +1,90 @@
+# sonbox: macOS, homebrew only. No nix, no oh-my-zsh, no powerlevel10k.
+# PATH bootstrap (brew shellenv) lives in ~/.zprofile so login shells get it
+# before this file runs.
+
+# ~/.local/bin holds claude, codex, and uv/uvx
+export PATH="$HOME/.local/bin:$PATH"
+
+# CLIs installed by `gem install` (brew's ruby is not on PATH by default).
+# Globbed so this survives a ruby major-version bump; (N) = skip if absent.
+for d in /opt/homebrew/lib/ruby/gems/*/bin(N); do
+  export PATH="$d:$PATH"
+done
+
+# Node — fnm. --use-on-cd auto-switches on .node-version / .nvmrc
+eval "$(fnm env --use-on-cd --shell zsh)"
+
+# try — scratch project dirs, date-prefixed. Must come after the gems PATH above.
+export TRY_PATH="$HOME/Work/tries"
+eval "$(try init)"
+
+# =============================================================================
+# Completions
+# =============================================================================
+# brew's site-functions (_gh, _az, _aws, _fnm, _chezmoi) is already on FPATH via
+# `brew shellenv`. ~/.zfunc holds ones I generated: _uv, _uvx, _codex.
+# Regenerate those after upgrades:
+#   uv generate-shell-completion zsh > ~/.zfunc/_uv
+#   uvx --generate-shell-completion zsh > ~/.zfunc/_uvx
+#   codex completion zsh > ~/.zfunc/_codex
+fpath=("$HOME/.zfunc" $fpath)
+autoload -Uz compinit && compinit
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
+
+# =============================================================================
+# History
+# =============================================================================
+# Mirrors omarchy's default/bash/shell so recall behaves the same on both
+# machines. Apple's /etc/zshrc otherwise caps this at SAVEHIST=1000, which is
+# far too small to be worth fzf-searching.
+#   omarchy                     zsh equivalent
+#   HISTSIZE=32768              HISTSIZE
+#   HISTFILESIZE=$HISTSIZE      SAVEHIST
+#   HISTCONTROL=ignoreboth      HIST_IGNORE_SPACE + HIST_IGNORE_DUPS
+#   shopt -s histappend         INC_APPEND_HISTORY
+HISTFILE="$HOME/.zsh_history"
+HISTSIZE=32768
+SAVEHIST=32768
+setopt INC_APPEND_HISTORY   # write as commands run, so a new pane sees them
+setopt HIST_IGNORE_DUPS     # drop consecutive duplicates (bash's ignoredups)
+setopt HIST_IGNORE_SPACE    # leading space keeps a command out of history
+setopt HIST_REDUCE_BLANKS
+
+# =============================================================================
+# Keybindings — vi mode, matching rss-mac's zshrc and the omarchy .inputrc
+# =============================================================================
+bindkey -v
+bindkey -M viins 'jk' vi-cmd-mode
+
+# only want enter (never bind to ^m :) - to execute commands)
+bindkey -r '^j'
+
+# fzf: ^r history search, ^t file picker, alt-c cd, and ** completion.
+# `fzf --zsh` emits both the completion and key-bindings halves, which is the
+# zsh equivalent of omarchy sourcing fzf's completion.bash + key-bindings.bash.
+# Must come after `bindkey -v` so ^r lands in the viins/vicmd keymaps too.
+# ^r here replaces the zsh-history-substring-search ^p/^n that rss-mac uses;
+# ^p/^n fall back to zsh's plain up/down-line-or-history.
+(( ${+commands[fzf]} )) && source <(fzf --zsh)
+
+# =============================================================================
+# Environment
+# =============================================================================
+export EDITOR=nvim
+export GIT_EDITOR=nvim
+
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+
+export AWS_DEFAULT_REGION=us-west-2
+export AWS_PAGER=""
+
+# =============================================================================
+# Aliases and functions
+# =============================================================================
+alias vim="nvim"
+alias vi="nvim"
+alias v="nvim"
+
+mkcd() { mkdir -p "$1" && cd "$1"; }

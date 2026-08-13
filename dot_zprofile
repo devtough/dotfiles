@@ -1,0 +1,5 @@
+# Login shells only. Puts brew on PATH (and FPATH, for completions) before
+# ~/.zshrc runs. tmux launches panes with `${SHELL} -l` so every pane gets this.
+#
+# sonbox only — rss-mac gets its PATH from nix-darwin.
+eval "$(/opt/homebrew/bin/brew shellenv zsh)"

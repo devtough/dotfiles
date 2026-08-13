@@ -47,7 +47,16 @@
 	st = status
 	dlog = "!f() { : git log ; GIT_EXTERNAL_DIFF=difft git log -p --ext-diff $@; }; f"
 	hist = log --pretty=format:'%C(yellow)[%ad]%C(reset) %C(green)[%h]%C(reset) | %C(red)%s %C(bold red){{ "{{" }}%an{{ "}}" }}%C(reset) %C(blue)%d%C(reset)' --graph --date=short
-{{- if eq .chezmoi.os "darwin" }}
+{{- /* Absolute paths: git runs credential helpers without the interactive
+       shell's PATH, and each machine installs gh somewhere different. */ -}}
+{{- if eq .profile "sonbox" }}
+[credential "https://github.com"]
+	helper =
+	helper = !/opt/homebrew/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper =
+	helper = !/opt/homebrew/bin/gh auth git-credential
+{{- else if eq .chezmoi.os "darwin" }}
 [credential "https://github.com"]
 	helper =
 	helper = !/run/current-system/sw/bin/gh auth git-credential

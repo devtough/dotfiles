@@ -1,0 +1,15 @@
+{{- /*
+  Per-profile plugin lockfile, so `:Lazy update` becomes a reviewable, revertable
+  commit instead of invisible drift.
+
+  Deployed on sonbox only for now. rss-mac's slot below holds its Dec 2025
+  snapshot, but .chezmoiignore.tmpl still excludes this file there: applying an
+  8-month-old lock to that machine would roll its live plugins backwards. To opt
+  rss-mac in, refresh its template from that machine
+  (`chezmoi add ~/.config/nvim/lazy-lock.json`) and drop the ignore line.
+*/ -}}
+{{- if eq .profile "sonbox" -}}
+{{-   template "nvim-lazy-lock-sonbox.json" . -}}
+{{- else -}}
+{{-   template "nvim-lazy-lock-rss-mac.json" . -}}
+{{- end -}}

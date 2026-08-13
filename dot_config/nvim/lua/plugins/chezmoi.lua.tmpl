@@ -1,0 +1,38 @@
+-- Overrides for the LazyVim `util.chezmoi` extra.
+--
+-- The extra hardcodes ~/.local/share/chezmoi as the source directory, in both
+-- chezmoi.vim's syntax detection and chezmoi.nvim's edit-watch autocmd. This
+-- repo lives somewhere else (sourceDir is recorded in ~/.config/chezmoi/
+-- chezmoi.toml), so without these overrides both features silently no-op --
+-- no template highlighting, no auto `chezmoi apply` on write.
+--
+-- The path is rendered by chezmoi itself, so each machine bakes in its own
+-- source dir and there is no startup cost from shelling out to `chezmoi
+-- source-path`. Note this file is a chezmoi template, so a literal double
+-- brace in Lua source has to be escaped as {{ "{{" }} to survive rendering.
+local source_dir = "{{ .chezmoi.sourceDir }}"
+
+return {
+  {
+    "alker0/chezmoi.vim",
+    init = function()
+      vim.g["chezmoi#use_tmp_buffer"] = 1
+      vim.g["chezmoi#source_dir_path"] = source_dir
+    end,
+  },
+  {
+    "xvzc/chezmoi.nvim",
+    init = function()
+      -- Replace the extra's autocmd, which watches the wrong directory. Its
+      -- own augroup-less autocmd still exists, but its pattern never matches
+      -- here, so it is inert rather than duplicated.
+      vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
+        group = vim.api.nvim_create_augroup("chezmoi_source_watch", { clear = true }),
+        pattern = source_dir .. "/*",
+        callback = function()
+          vim.schedule(require("chezmoi.commands.__edit").watch)
+        end,
+      })
+    end,
+  },
+}

@@ -1,4 +1,6 @@
-{{ if eq .chezmoi.os "darwin" -}}
+{{ if eq .profile "rss-mac" -}}
+# oh-my-zsh + powerlevel10k stack. rss-mac only — sonbox runs a minimal zsh
+# with no framework, omarchy runs bash.
 [".oh-my-zsh"]
     type = "git-repo"
     url = "https://github.com/ohmyzsh/ohmyzsh.git"

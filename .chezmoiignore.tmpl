@@ -1,13 +1,27 @@
 # Repo files - don't deploy to ~
 README.md
 truecolor-test.sh
+sync-nvim-state.sh
 night-owl
 
 # Ignore oh-my-zsh cache on all systems
 .oh-my-zsh/cache/**
 
-# Nvim files that differ per machine (managed by lazy/omarchy)
+{{ if ne .profile "sonbox" }}
+# sonbox-only: brew shellenv bootstrap for login shells
+.zprofile
+
+# The plugin lockfile is tracked per profile, but only sonbox is opted in.
+# Deploying sonbox's (or the Dec 2025) lock to the other machines would roll
+# their live plugin sets backwards. See dot_config/nvim/lazy-lock.json.tmpl.
 .config/nvim/lazy-lock.json
+{{ end }}
+
+{{ if eq .profile "sonbox" }}
+# oh-my-zsh, powerlevel10k and the omz completion drop-ins are rss-mac only
+.p10k.zsh
+.oh-my-zsh-completions/
+{{ end }}
 
 {{ if eq .chezmoi.os "linux" }}
 # macOS-only files - ignore on Linux

@@ -32,9 +32,12 @@ require("lazy").setup({
   },
   install = { colorscheme = { "tokyonight", "habamax" } },
   checker = {
-    enabled = true, -- check for plugin updates periodically
-    notify = false, -- notify on update
-  }, -- automatically check for plugin updates
+    -- Off: lazy-lock.json is tracked in git (per profile), so plugin updates
+    -- should be a deliberate `:Lazy update` + ./sync-nvim-state.sh + commit,
+    -- not a background check nudging the lock out of sync.
+    enabled = false,
+    notify = false,
+  },
   performance = {
     rtp = {
       -- disable some rtp plugins

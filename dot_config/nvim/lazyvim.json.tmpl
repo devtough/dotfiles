@@ -1,0 +1,28 @@
+{{- /*
+  LazyVim writes this file itself when you toggle extras via :LazyExtras, so it
+  is machine state, not shared config. It is deployed on ALL THREE machines, so
+  every profile gets its own body -- an `else` fallback here would mean editing
+  one machine's extras silently changed another's.
+
+  Refresh after :LazyExtras with ./sync-nvim-state.sh (never `chezmoi add`,
+  which would replace this dispatcher with a flat file).
+
+  Two things to know before hand-editing any of the bodies:
+    - Entries are FULL module names ("lazyvim.plugins.extras.lang.json").
+    - "version" and "install_version" must both be present. Without "version"
+      LazyVim runs its v0 migration, which prepends "lazyvim.plugins.extras."
+      to every entry and silently breaks all of them. Without
+      "install_version" >= 8 it treats the install as legacy and hands you
+      fzf-lua + neo-tree instead of the snacks picker/explorer.
+
+  sonbox is on LazyVim v16 (snacks stack, mini-hipatterns at its v16 util/
+  path). The other two are still on their Dec 2025 state and list the old
+  editor/ path; leave those alone until each machine is migrated.
+*/ -}}
+{{- if eq .profile "sonbox" -}}
+{{-   template "nvim-lazyvim-sonbox.json" . -}}
+{{- else if eq .profile "omarchy" -}}
+{{-   template "nvim-lazyvim-omarchy.json" . -}}
+{{- else -}}
+{{-   template "nvim-lazyvim-rss-mac.json" . -}}
+{{- end -}}
