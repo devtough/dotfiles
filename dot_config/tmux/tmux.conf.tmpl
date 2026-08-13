@@ -256,10 +256,21 @@ set -g @plugin 'tmux-plugins/tmux-continuum'   # must be declared after resurrec
 # @resurrect-delete-backup-after if it ever matters.
 set -g @resurrect-capture-pane-contents 'on'
 
-# Save interval left at upstream's 15. A save that fires while the server is
-# starting or stopping writes an empty dump and repoints 'last' at it, which
-# @continuum-restore then faithfully restores as nothing (resurrect #576/#578).
-# Shortening the interval multiplies exposure to that race for very little gain.
+# Minutes, integer; 0 disables. continuum does `interval * 60` in $(( )), so
+# sub-minute values are not expressible at all -- 1 is the floor.
+#
+# Left at upstream's 15 deliberately. Cost is not the reason: measured here on
+# 12 panes, a save is ~0.13s + ~42ms/pane for metadata, plus ~75ms/pane again
+# when a pane is at the full 50000-line history-limit -- ~2s of backgrounded
+# work in the worst case, and it never blocks the server. The reason is
+# resurrect #576/#578: a save landing while the server is starting or stopping
+# writes an empty dump and repoints 'last' at it, so @continuum-restore then
+# restores nothing. Both issues are open and upstream has not shipped a commit
+# since Aug 2024, so shortening the interval just buys more rolls of that dice.
+#
+# `prefix + C-s` saves on demand when you want a checkpoint now. If write
+# volume ever becomes the concern instead, @resurrect-pane-contents-area
+# 'visible' captures the screen rather than the whole scrollback.
 set -g @continuum-save-interval '15'
 set -g @continuum-restore 'on'
 
