@@ -274,6 +274,28 @@ set -g @resurrect-capture-pane-contents 'on'
 set -g @continuum-save-interval '15'
 set -g @continuum-restore 'on'
 
+# Install continuum's autosave hook ourselves, because continuum will not.
+#
+# continuum.tmux only calls add_resurrect_save_interpolation() when
+# `! another_tmux_server_running`, and that check is not "another tmux SERVER" —
+# helpers.sh greps `ps -u $UID -o "command pid"` for every process whose command
+# starts with "tmux", then trips if the count exceeds 1 at startup. This machine
+# runs a launchd-managed `tmux -S /tmp/cdxprobe/p.sock` for codex, which pushes
+# the count to 2, so autosave was silently never installed. Verified: resurrect
+# bound its keys, continuum set no @continuum-save-last-timestamp, and
+# status-right had no interpolation.
+#
+# Appending the exact same string continuum would have used means its own
+# presence check (a substring test) finds it and skips, so this never
+# double-installs. @continuum-restore is unaffected either way — the restore
+# path sits outside that guard.
+#
+# The guard exists so two tmux servers do not clobber each other's dump. That
+# risk does not apply here: the codex servers run `-f /dev/null`, so they load
+# no plugins and never save. If you ever run a second REAL tmux server, give it
+# its own @resurrect-dir or this will race.
+set -ag status-right "#({{ .chezmoi.homeDir }}/.config/tmux/plugins/tmux-continuum/scripts/continuum_save.sh)"
+
 # Process restore is left at resurrect's defaults, which is a conservative list:
 # vi vim nvim emacs man less more tail top htop irssi weechat mutt. Anything
 # else -- claude, ssh, dev servers -- comes back as a plain shell in the right
