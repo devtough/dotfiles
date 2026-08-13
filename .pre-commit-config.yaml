@@ -5,9 +5,21 @@ repos:
       - id: gitleaks
 
   # Same engine as typos-lsp in Neovim, so the editor and the commit hook agree
-  # on what counts as a typo. Add project jargon to a _typos.toml at the repo
-  # root under [default.extend-words].
+  # on what counts as a typo.
+  #
+  # args is REQUIRED, not stylistic. Upstream's .pre-commit-hooks.yaml defaults
+  # to `[--write-changes, --force-exclude]`, i.e. the hook edits your files in
+  # place on every commit. Setting args here replaces that list, leaving typos
+  # to report and fail rather than to rewrite.
+  #
+  # Allowlist jargon in a _typos.toml at the repo root. Note the map is
+  # typo -> correction, so a word is only made valid by mapping it to ITSELF:
+  #   [default.extend-words]
+  #   sonbox = "sonbox"      # correct;  sonbox = "" would mean "never valid"
+  # Jargon that only ever appears inside a longer identifier needs
+  # [default.extend-identifiers] instead.
   - repo: https://github.com/crate-ci/typos
     rev: v1.49.0
     hooks:
       - id: typos
+        args: [--force-exclude]

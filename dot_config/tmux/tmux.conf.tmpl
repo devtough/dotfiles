@@ -249,12 +249,18 @@ set -g @plugin 'tmux-plugins/tmux-continuum'   # must be declared after resurrec
 # it on a timer and replays the last save when the server starts.
 #
 # capture-pane-contents replays scrollback into restored panes. It captures up
-# to 'history-limit' (50000 above) per pane on every save, and resurrect never
-# prunes ~/.local/share/tmux/resurrect — sweep it occasionally:
-#     find ~/.local/share/tmux/resurrect -mtime +14 -delete
+# to 'history-limit' (50000 above) per pane, which is roughly 6MB of staging per
+# full pane on every save. Disk does not accumulate: pane contents go to a
+# single fixed-name pane_contents.tar.gz, and save.sh's remove_old_backups()
+# prunes dumps past 30 days while keeping the last 5. Shorten that window with
+# @resurrect-delete-backup-after if it ever matters.
 set -g @resurrect-capture-pane-contents 'on'
-set -g @resurrect-strategy-nvim 'session'
-set -g @continuum-save-interval '5'            # minutes; upstream default is 15
+
+# Save interval left at upstream's 15. A save that fires while the server is
+# starting or stopping writes an empty dump and repoints 'last' at it, which
+# @continuum-restore then faithfully restores as nothing (resurrect #576/#578).
+# Shortening the interval multiplies exposure to that race for very little gain.
+set -g @continuum-save-interval '15'
 set -g @continuum-restore 'on'
 
 # Process restore is left at resurrect's defaults, which is a conservative list:

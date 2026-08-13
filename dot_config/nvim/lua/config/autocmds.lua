@@ -2,27 +2,27 @@
 -- Default autocmds that are always set: https://github.com/LazyVim/LazyVim/blob/main/lua/lazyvim/config/autocmds.lua
 -- Add any additional autocmds here
 
--- Built-in spell is prose-only (see the note in options.lua); code buffers are
--- covered by typos-lsp and harper-ls instead. 'spell' is window-local, so this
--- has to be set per-filetype rather than globally.
+-- Built-in spell is prose-only now (see options.lua); code buffers are covered
+-- by typos-lsp and harper-ls. Turning it back on for prose needs no autocmd
+-- here: LazyVim's own `wrap_spell` group already does it, over a slightly wider
+-- set than the obvious one --
 --
--- Note what is deliberately NOT here any more. Neovim's treesitter highlighter
--- appends `noplainbuffer` to 'spelloptions' every time it attaches:
+--   lazyvim/config/autocmds.lua:
+--     pattern = { "text", "plaintex", "typst", "gitcommit", "markdown" }
+--
+-- so adding a second autocmd here would be redundant, and worse, would read as
+-- the definition of "prose" while silently not being it.
+--
+-- Also deliberately absent: this file used to reassert `spelloptions=camel` on
+-- a vim.schedule, because Neovim's treesitter highlighter appends
+-- `noplainbuffer` on every attach --
 --
 --   runtime/lua/vim/treesitter/highlighter.lua:
 --     vim.opt_local.spelloptions:append('noplainbuffer')
 --
--- which narrows checking to treesitter's @spell captures. This file used to
--- reassert `camel` on a vim.schedule to undo that, because most language
--- grammars only tag comments as @spell and whole-buffer checking was the point.
--- Now that code buffers are out of scope, letting `noplainbuffer` stand is
--- actively better: in markdown it is what keeps fenced code blocks and inline
--- code from being spell-checked. Restore the scheduled reassert here if
+-- -- which narrows checking to treesitter's @spell captures. That mattered when
+-- built-in spell covered code, since most grammars tag only comments as @spell.
+-- Now that code is out of scope, letting the narrowing stand is what keeps
+-- markdown's fenced code blocks out of the spell checker (`(inline) @spell`
+-- captures prose; `(code_span)` is tagged @nospell). Restore the reassert if
 -- built-in spell ever goes back to covering code.
-vim.api.nvim_create_autocmd("FileType", {
-  group = vim.api.nvim_create_augroup("spell_prose", { clear = true }),
-  pattern = { "markdown", "text", "gitcommit" },
-  callback = function()
-    vim.opt_local.spell = true
-  end,
-})

@@ -41,16 +41,16 @@
 # Session persistence. Managed here rather than through `prefix + I` so a fresh
 # machine gets them from `chezmoi apply` alone. Declared in tmux.conf via
 # @plugin so tpm sources them.
+#
+# No exact/stripComponents here: chezmoi only consumes those for archive
+# externals, so on a git-repo they are inert. Nothing in this directory gets
+# deleted, including plugins installed by hand with `prefix + I`.
 [".config/tmux/plugins/tmux-resurrect"]
     type = "git-repo"
     url = "https://github.com/tmux-plugins/tmux-resurrect.git"
-    exact = true
-    stripComponents = 1
     refreshPeriod = "168h"
 
 [".config/tmux/plugins/tmux-continuum"]
     type = "git-repo"
     url = "https://github.com/tmux-plugins/tmux-continuum.git"
-    exact = true
-    stripComponents = 1
     refreshPeriod = "168h"

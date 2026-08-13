@@ -5,8 +5,9 @@ vim.opt.relativenumber = false
 
 -- Spell checking is split by buffer kind:
 --
---   prose (markdown/text/gitcommit) -- built-in dictionary spell, switched on
---     per-filetype in autocmds.lua, with harper-ls layered on for grammar.
+--   prose -- built-in dictionary spell, switched back on per-filetype by
+--     LazyVim's own `wrap_spell` autocmd (text, plaintex, typst, gitcommit,
+--     markdown), with harper-ls layered on for grammar. See autocmds.lua.
 --   code -- handled entirely by language servers: typos-lsp over the whole
 --     buffer, harper-ls in comments. See lua/plugins/spell.lua.
 --

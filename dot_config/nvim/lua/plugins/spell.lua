@@ -49,6 +49,8 @@ return {
             "yaml",
             "zsh",
           },
+          -- typos-lsp lowercases this before matching, so the capitalization is
+          -- free. harper's equivalent does NOT -- see below.
           init_options = { diagnosticSeverity = "Warning" },
         },
         harper_ls = {
@@ -62,11 +64,15 @@ return {
             "typescriptreact",
             "javascript",
             "sh",
-            "bash",
-            "yaml",
-            "json",
-            "dockerfile",
           },
+          -- harper dispatches on the LSP languageId, and Neovim sends the raw
+          -- filetype. Its shell parser is registered as "shellscript", so
+          -- without this translation every shell script is silently dropped --
+          -- no diagnostics, no error. ("bash" is not a Neovim filetype at all;
+          -- bash scripts arrive as "sh".)
+          get_language_id = function(_, ft)
+            return ({ sh = "shellscript", cs = "csharp" })[ft] or ft
+          end,
           settings = {
             ["harper-ls"] = {
               linters = {
@@ -76,8 +82,15 @@ return {
                 SentenceCapitalization = false,
                 LongSentences = false,
               },
+              -- Upstream calls this "incredibly new and unstable". Drop it
+              -- first if harper starts behaving oddly in mixed-language files.
               isolateEnglish = true,
               dialect = "American",
+              -- If you ever add diagnosticSeverity here, note it is lowercase-
+              -- only ("error"|"warning"|"information"|"hint"). harper does no
+              -- case folding, and an unparseable value makes it discard this
+              -- entire settings block, with the error only in :LspLog.
+              -- Misspelled `linters` keys are likewise accepted and ignored.
             },
           },
         },
