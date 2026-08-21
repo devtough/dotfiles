@@ -1,0 +1,736 @@
+#!/usr/bin/env bash
+# corral — track what is running in every tmux pane, and put the agents back
+# after a reboot.
+#
+# Two jobs:
+#
+#   1. Inventory. `corral list` joins tmux's own view of every pane on the
+#      server (session, window, command, cwd, title) with per-pane agent state
+#      pushed in by `corral-hook`, and prints it as a table or as JSON. That
+#      JSON is the API: a status-bar segment, an fzf picker, or a live sidebar
+#      are all `corral list --json` plus a renderer, and none of them need to
+#      know how the state was collected.
+#
+#   2. Persistence. tmux-resurrect saves the pane tree and each pane's cwd, but
+#      an agent pane comes back as a bare shell: Claude Code rewrites its argv
+#      to "claude", so neither ps nor resurrect can tell which conversation the
+#      pane was holding. corral records the session id per pane while the agent
+#      runs, snapshots it at the same instant resurrect saves, and replays
+#      `claude --resume <id>` into the matching pane after resurrect restores.
+#
+# Where state lives, and why it is split:
+#
+#   tmux pane options (@corral_state, @corral_since, @corral_agent,
+#   @corral_detail, @corral_session)
+#       Volatile state, written by the hook on every transition. It dies with
+#       the server, which is correct — "working" means nothing after a reboot.
+#       Formats read it directly, so a status-bar glyph costs zero processes:
+#       #{@corral_state} in window-status-format just works, and every writer
+#       rolls a per-window aggregate into @corral_win_state.
+#
+#   ~/.local/state/corral/panes/<pane>.json
+#       Durable per-pane record: agent, session id, transcript path, cwd,
+#       coordinates, server pid. Written only when an agent session starts or
+#       ends. Records carry the tmux server pid because pane ids (%7) are only
+#       unique within one server and start over at %0 after a restart.
+#
+#   ~/.local/state/corral/restore/corral_<stamp>.json (+ a "last" symlink)
+#       Coordinate-keyed snapshot, written from resurrect's post-save hook so it
+#       lines up exactly with the dump resurrect will replay.
+#
+# Subcommands: report list status seen refresh save restore gc doctor
+#              install-hooks
+
+set -euo pipefail
+
+STATE_DIR=${CORRAL_STATE_DIR:-$HOME/.local/state/corral}
+PANES_DIR=$STATE_DIR/panes
+SNAP_DIR=$STATE_DIR/restore
+LOG=$STATE_DIR/corral.log
+CONFIG=${CORRAL_CONFIG:-$HOME/.config/corral/config.sh}
+
+# shellcheck source=/dev/null
+[[ -r $CONFIG ]] && . "$CONFIG"
+
+# Flags to hand back to a resumed claude. The process rewrites its title to a
+# bare "claude", so the flags it was started with are not recoverable from ps,
+# from tmux, or from the transcript — this is the one part of a restore that
+# has to be declared rather than observed.
+: "${CORRAL_CLAUDE_FLAGS:=--dangerously-skip-permissions --chrome}"
+: "${CORRAL_CODEX_FLAGS:=}"
+# auto  -> type the resume command into the pane and press Enter
+# stage -> type it and leave it sitting on the prompt for you to confirm
+# off   -> log what would have happened, touch nothing
+: "${CORRAL_RESTORE:=auto}"
+# Seconds to let the restored login shells reach a prompt before typing at
+# them, and seconds between two launches so a reboot does not start four agents
+# in the same instant.
+: "${CORRAL_RESTORE_SETTLE:=3}"
+: "${CORRAL_RESTORE_STAGGER:=0.7}"
+: "${CORRAL_RESTORE_TRIES:=15}"
+# A pane claiming to be working with no hook event for this long is flagged
+# stale by readers: the agent was killed, or it is wedged.
+: "${CORRAL_STALE_SECS:=1800}"
+: "${CORRAL_SNAPSHOT_KEEP:=20}"
+
+US=$'\x1f'
+
+# Field order below is load-bearing: the jq program indexes it positionally.
+PANE_FMT="#{pane_id}${US}#{session_name}${US}#{window_index}${US}#{pane_index}${US}#{window_name}${US}#{pane_current_command}${US}#{pane_current_path}${US}#{pane_title}${US}#{@corral_agent}${US}#{@corral_state}${US}#{@corral_since}${US}#{@corral_detail}${US}#{@corral_session}${US}#{pane_active}${US}#{window_active}${US}#{pane_pid}${US}#{pane_tty}${US}#{pane_dead}${US}#{@corral_seen_at}"
+
+die() { printf 'corral: %s\n' "$*" >&2; exit 1; }
+
+log() {
+	mkdir -p "$STATE_DIR"
+	printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$*" >>"$LOG"
+}
+
+have_tmux() { command -v tmux >/dev/null 2>&1 && tmux has-session 2>/dev/null; }
+
+server_pid() { tmux display-message -p '#{pid}' 2>/dev/null || echo 0; }
+
+record_path() {
+	# %7 -> pane-7.json; the pane id is the only stable per-pane handle tmux has.
+	printf '%s/pane-%s.json\n' "$PANES_DIR" "${1#%}"
+}
+
+# ---------------------------------------------------------------------------
+# inventory: live tmux panes joined with the durable records, as JSON
+# ---------------------------------------------------------------------------
+inventory() {
+	have_tmux || { echo '[]'; return 0; }
+	local records now spid
+	spid=$(server_pid)
+	now=$(date +%s)
+	records=$(cat "$PANES_DIR"/*.json 2>/dev/null \
+		| jq -s --argjson spid "$spid" '
+			map(select(type == "object" and .pane_id and (.server_pid == $spid)))
+			| map({key: .pane_id, value: .}) | from_entries' 2>/dev/null) || records=""
+	[[ -z $records ]] && records='{}'
+
+	tmux list-panes -a -F "$PANE_FMT" 2>/dev/null | jq -R -s \
+		--argjson records "$records" \
+		--argjson now "$now" \
+		--argjson stale "$CORRAL_STALE_SECS" '
+		def rank($s): {"blocked":4,"done":3,"working":2,"idle":1,"starting":1}[$s // ""] // 0;
+		def is_shell($c): ($c | test("^-?(zsh|bash|sh|fish|dash|ksh|login)$"));
+		# Claude Code publishes what it is working on as the pane title, behind
+		# its own marker glyph; strip the marker, keep the sentence.
+		def summarize($t): ($t | sub("^[^[:alnum:]([{<\"/~$]+\\s*"; "") | sub("\\s+$"; ""));
+		def agent_of($rec; $opt; $cmd; $title):
+			if ($rec.agent // "") != "" then $rec.agent
+			elif ($opt // "") != "" then $opt
+			# A claude pane reports its version as the command name ("2.1.238")
+			# because the binary is versioned per release; the marked title
+			# confirms it is an agent and not some other versioned binary.
+			elif ($cmd | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and ($title | test("^[^[:alnum:]]")) then "claude"
+			elif ($cmd | test("^(claude|codex|gemini|amp|opencode|droid|cursor-agent|goose|aider|crush|grok|kiro|cline|copilot|devin|kimi|kilo|hermes|pi|maki|agy|qodercli)$")) then $cmd
+			else null end;
+
+		split("\n") | map(select(length > 0)) | map(
+			split("\u001f") as $f
+			| ($records[$f[0]] // {}) as $rec
+			| {
+				pane_id: $f[0],
+				target: ($f[1] + ":" + $f[2] + "." + $f[3]),
+				session: $f[1],
+				window: ($f[2] | tonumber),
+				pane: ($f[3] | tonumber),
+				window_name: $f[4],
+				command: $f[5],
+				cwd: $f[6],
+				title: $f[7],
+				summary: summarize($f[7]),
+				agent: agent_of($rec; $f[8]; $f[5]; $f[7]),
+				state: (if ($f[9] // "") == "" then null else $f[9] end),
+				since: (if ($f[10] // "") == "" then null else ($f[10] | tonumber) end),
+				detail: (if ($f[11] // "") == "" then null else $f[11] end),
+				session_id: (if ($f[12] // "") != "" then $f[12] else $rec.session_id end),
+				transcript: $rec.transcript,
+				started: $rec.started,
+				active: ($f[13] == "1"),
+				window_active: ($f[14] == "1"),
+				pid: ($f[15] | tonumber? // null),
+				tty: $f[16],
+				dead: ($f[17] == "1"),
+				seen_at: (if ($f[18] // "") == "" then null else ($f[18] | tonumber) end),
+				# The agent exited without a SessionEnd — killed, crashed, or
+				# suspended. tmux showing a shell in the foreground again is the
+				# tell, and it means the state left behind is a lie.
+				exited: (is_shell($f[5]) and (($f[9] // "") != ""))
+			}
+			| . + {
+				age: (if .since then ($now - .since) else null end),
+				# Stale means "the state on screen is probably a lie", so it keys off
+				# the last event received, not off how long the state has held: a
+				# genuinely long turn keeps reporting, a killed agent stops.
+				stale: ((.seen_at // .since) as $last
+					| if ($last and (.state == "working" or .state == "blocked"))
+						then (($now - $last) > $stale) else false end)
+			}
+			| . + {state: (if .exited then null else .state end)}
+			| . + {rank: (if .exited then 0 else rank(.state) end)}
+		)
+		| sort_by(-.rank, (.since // 9999999999), .target)'
+}
+
+# ---------------------------------------------------------------------------
+# report: the ingest entry point
+#
+# Every writer other than the hook's hot path comes through here — a future
+# screen-scraper for agents that have no hooks, a wrapper script, an editor
+# plugin — so the record format stays in one place:
+#     corral report --pane %7 --agent codex --state working [--detail "..."]
+# ---------------------------------------------------------------------------
+cmd_report() {
+	local pane="" agent="" state="" detail="" event="" payload="" session_id="" transcript="" cwd=""
+	while (($#)); do
+		case $1 in
+			--pane) pane=$2; shift 2 ;;
+			--agent) agent=$2; shift 2 ;;
+			--state) state=$2; shift 2 ;;
+			--detail) detail=$2; shift 2 ;;
+			--event) event=$2; shift 2 ;;
+			--payload) payload=$2; shift 2 ;;
+			--session-id) session_id=$2; shift 2 ;;
+			--transcript) transcript=$2; shift 2 ;;
+			--cwd) cwd=$2; shift 2 ;;
+			*) die "report: unknown argument $1" ;;
+		esac
+	done
+	pane=${pane:-${TMUX_PANE:-}}
+	[[ -n $pane ]] || return 0
+	have_tmux || return 0
+	tmux display-message -p -t "$pane" '#{pane_id}' >/dev/null 2>&1 || return 0
+
+	# Pull what the payload carries, when there is one.
+	if [[ -n $payload && -s $payload ]] && command -v jq >/dev/null 2>&1; then
+		local parsed p_sid p_tr p_cwd p_msg
+		# Split on US, not tab: tab is an IFS whitespace character, so `read`
+		# would collapse the empty leading fields of a payload that carries
+		# only a message and shift everything left by three.
+		parsed=$(jq -r '[(.session_id // ""), (.transcript_path // ""), (.cwd // ""), (.message // .source // "")] | join("\u001f")' <"$payload" 2>/dev/null) || parsed=""
+		if [[ -n $parsed ]]; then
+			IFS=$US read -r p_sid p_tr p_cwd p_msg <<<"$parsed"
+			[[ -z $session_id ]] && session_id=${p_sid:-}
+			[[ -z $transcript ]] && transcript=${p_tr:-}
+			[[ -z $cwd ]] && cwd=${p_cwd:-}
+			[[ -z $detail ]] && detail=${p_msg:-}
+		fi
+	fi
+	# Last resort for a claude hook whose payload lost the id. Deliberately not
+	# applied to other agents: a writer invoked from inside a Claude Code shell
+	# would otherwise stamp claude's session id onto somebody else's pane.
+	[[ $agent == claude && -z $session_id && -n ${CLAUDE_CODE_SESSION_ID:-} ]] && session_id=$CLAUDE_CODE_SESSION_ID
+
+	local now target
+	now=$(date +%s)
+	target=$(tmux display-message -p -t "$pane" '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || echo "")
+	[[ -z $cwd ]] && cwd=$(tmux display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null || echo "")
+
+	if [[ $state == gone ]]; then
+		rm -f "$(record_path "$pane")"
+		local opt
+		for opt in @corral_state @corral_agent @corral_since @corral_seen_at @corral_detail @corral_session; do
+			tmux set -p -u -t "$pane" "$opt" 2>/dev/null || true
+		done
+		refresh_window_state "$pane"
+		return 0
+	fi
+
+	tmux set -p -t "$pane" @corral_state "$state" 2>/dev/null || true
+	tmux set -p -t "$pane" @corral_since "$now" 2>/dev/null || true
+	tmux set -p -t "$pane" @corral_seen_at "$now" 2>/dev/null || true
+	[[ -n $agent ]] && tmux set -p -t "$pane" @corral_agent "$agent" 2>/dev/null
+	tmux set -p -t "$pane" @corral_detail "${detail:0:120}" 2>/dev/null || true
+	[[ -n $session_id ]] && tmux set -p -t "$pane" @corral_session "$session_id" 2>/dev/null
+	refresh_window_state "$pane"
+
+	# The durable record only earns its keep when there is an identity worth
+	# resuming; a bare state change stays in tmux and dies with the server.
+	if [[ -n $session_id ]]; then
+		mkdir -p "$PANES_DIR"
+		local rec tmpf prev
+		rec=$(record_path "$pane")
+		# Merge rather than overwrite. Only SessionStart carries the transcript
+		# path; a later Notification for the same session would otherwise blank
+		# it out, and restore would have nothing to validate the resume against.
+		prev='{}'
+		if [[ -f $rec ]]; then
+			prev=$(jq -c --arg sid "$session_id" \
+				'if .session_id == $sid then . else {} end' "$rec" 2>/dev/null) || prev='{}'
+			[[ -z $prev ]] && prev='{}'
+		fi
+		tmpf=$(mktemp "${TMPDIR:-/tmp}/corral-rec.XXXXXX")
+		if jq -n --argjson prev "$prev" \
+			--arg pane_id "$pane" --arg agent "${agent:-unknown}" \
+			--arg session_id "$session_id" --arg transcript "$transcript" \
+			--arg cwd "$cwd" --arg target "$target" --arg event "$event" \
+			--argjson started "$now" --argjson server_pid "$(server_pid)" \
+			'{schema: 1, pane_id: $pane_id, agent: $agent, session_id: $session_id,
+			  transcript: (if $transcript != "" then $transcript else $prev.transcript end),
+			  cwd: (if $cwd != "" then $cwd else $prev.cwd end),
+			  target: (if $target != "" then $target else $prev.target end),
+			  started: ($prev.started // $started),
+			  server_pid: $server_pid, last_event: $event}' >"$tmpf" 2>/dev/null; then
+			mv -f "$tmpf" "$rec"
+		else
+			rm -f "$tmpf"
+		fi
+	fi
+	return 0
+}
+
+# Roll the panes of one window up into @corral_win_state so a status-bar format
+# can show a single glyph per window without shelling out on every redraw.
+refresh_window_state() {
+	local pane=$1 best="" best_rank=0 r s
+	for s in $(tmux list-panes -t "$pane" -F '#{@corral_state}' 2>/dev/null); do
+		case $s in
+			blocked) r=4 ;;
+			done) r=3 ;;
+			working) r=2 ;;
+			idle|starting) r=1 ;;
+			*) r=0 ;;
+		esac
+		((r > best_rank)) && { best_rank=$r; best=$s; }
+	done
+	tmux set -w -t "$pane" @corral_win_state "$best" 2>/dev/null || true
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# list / status
+# ---------------------------------------------------------------------------
+cmd_list() {
+	local json=0 agents_only=0
+	while (($#)); do
+		case $1 in
+			--json) json=1; shift ;;
+			--agents) agents_only=1; shift ;;
+			*) die "list: unknown argument $1" ;;
+		esac
+	done
+	local inv
+	inv=$(inventory)
+	((agents_only)) && inv=$(jq '[.[] | select(.agent != null)]' <<<"$inv")
+	if ((json)); then
+		printf '%s\n' "$inv"
+		return 0
+	fi
+	jq -r '
+		def pad($n): (. // "") | tostring
+			| if (length < $n) then . + (" " * ($n - length)) else .[0:$n] end;
+		def glyph($s): {"blocked":"▲","done":"✓","working":"●","idle":"○","starting":"◌"}[$s // ""] // "·";
+		def humanage($a):
+			if $a == null then "-"
+			elif $a < 60 then "\($a)s"
+			elif $a < 3600 then "\(($a / 60) | floor)m"
+			elif $a < 86400 then "\(($a / 3600) | floor)h"
+			else "\(($a / 86400) | floor)d" end;
+		(["", "TARGET", "AGENT", "STATE", "AGE", "WHAT", "CWD"]
+			| (.[0] | pad(2)) + (.[1] | pad(10)) + (.[2] | pad(8)) + (.[3] | pad(9))
+			+ (.[4] | pad(6)) + (.[5] | pad(44)) + .[6]),
+		(.[] |
+			(glyph(.state) | pad(2))
+			+ (.target | pad(10))
+			+ ((.agent // "-") | pad(8))
+			+ (((.state // "-") + (if .stale then "!" else "" end)) | pad(9))
+			+ (humanage(.age) | pad(6))
+			+ ((if (.summary // "") != "" then .summary else .command end) | pad(44))
+			+ (.cwd | sub("^" + env.HOME; "~")))' <<<"$inv"
+}
+
+cmd_status() {
+	# One line for status-right: counts by state, loudest first. The colours are
+	# tmux format escapes, so this drops straight into the status bar.
+	inventory | jq -r '
+		[.[] | select(.agent != null) | .state] as $s
+		| {blocked: ([$s[] | select(. == "blocked")] | length),
+		   done:    ([$s[] | select(. == "done")]    | length),
+		   working: ([$s[] | select(. == "working")] | length),
+		   idle:    ([$s[] | select(. == "idle")]    | length)}
+		| [ (if .blocked > 0 then "#[fg=#ef5350]▲\(.blocked)" else empty end),
+		    (if .done    > 0 then "#[fg=#22da6e]✓\(.done)"    else empty end),
+		    (if .working > 0 then "#[fg=#c5e478]●\(.working)" else empty end),
+		    (if .idle    > 0 then "#[fg=#687686]○\(.idle)"    else empty end) ]
+		| if length == 0 then "" else join(" ") + "#[default]" end'
+}
+
+# Looking at a pane that finished clears its "done, unseen" badge. Wired to
+# tmux's pane-focus-in hook.
+cmd_seen() {
+	local pane=${1:-${TMUX_PANE:-}}
+	[[ -n $pane ]] || return 0
+	have_tmux || return 0
+	local state
+	state=$(tmux display-message -p -t "$pane" '#{@corral_state}' 2>/dev/null || echo "")
+	if [[ $state == done ]]; then
+		tmux set -p -t "$pane" @corral_state idle 2>/dev/null || true
+		tmux set -p -t "$pane" @corral_since "$(date +%s)" 2>/dev/null || true
+		refresh_window_state "$pane"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# refresh / gc: reconcile what the hooks could not tell us
+# ---------------------------------------------------------------------------
+cmd_refresh() {
+	have_tmux || return 0
+	local pane cmd state agent
+	while IFS=$'\t' read -r pane cmd state agent; do
+		# An agent that was killed leaves its last state behind; a shell back in
+		# the foreground is the only signal we get. Clear the identity too, and
+		# drop the record: a pane with no agent in it should not come back as a
+		# resumed conversation, and a normal exit would have said so via
+		# SessionEnd. (A suspended agent — ctrl-z — reads the same way and gets
+		# forgotten; start it again and SessionStart re-registers it.)
+		if [[ ( -n $state || -n $agent ) && $cmd =~ ^-?(zsh|bash|sh|fish|dash|ksh|login)$ ]]; then
+			local opt
+			for opt in @corral_state @corral_detail @corral_seen_at @corral_agent @corral_session; do
+				tmux set -p -u -t "$pane" "$opt" 2>/dev/null || true
+			done
+			rm -f "$(record_path "$pane")"
+			refresh_window_state "$pane"
+		fi
+	done < <(tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{@corral_state}\t#{@corral_agent}' 2>/dev/null)
+	cmd_gc
+}
+
+cmd_gc() {
+	have_tmux || return 0
+	mkdir -p "$PANES_DIR"
+	local live spid f pane
+	spid=$(server_pid)
+	live=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null || echo "")
+	for f in "$PANES_DIR"/*.json; do
+		[[ -e $f ]] || continue
+		pane=$(jq -r '.pane_id // ""' "$f" 2>/dev/null) || pane=""
+		# Records from a previous tmux server are worse than useless: pane ids
+		# restart at %0 with every server, so a stale record would mislabel a
+		# brand new pane.
+		if [[ -z $pane ]] \
+			|| [[ $(jq -r '.server_pid // 0' "$f" 2>/dev/null) != "$spid" ]] \
+			|| ! grep -qx -- "$pane" <<<"$live"; then
+			rm -f "$f"
+		fi
+	done
+	# The hook caches "which pane is agent pid N in" under the agent's pid;
+	# entries outlive the agent by exactly as long as nobody cleans them up.
+	local pidfile pid
+	for pidfile in "$STATE_DIR"/pidpane/*; do
+		[[ -e $pidfile ]] || continue
+		pid=${pidfile##*/}
+		[[ $pid =~ ^[0-9]+$ ]] || { rm -f "$pidfile"; continue; }
+		kill -0 "$pid" 2>/dev/null || rm -f "$pidfile"
+	done
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# save / restore
+# ---------------------------------------------------------------------------
+cmd_save() {
+	have_tmux || return 0
+	mkdir -p "$SNAP_DIR"
+	local stamp file
+	stamp=$(date +%Y%m%dT%H%M%S)
+	file=$SNAP_DIR/corral_$stamp.json
+	inventory | jq --arg saved_at "$(date -Iseconds)" --argjson ts "$(date +%s)" \
+		--arg socket "$(tmux display-message -p '#{socket_path}' 2>/dev/null || echo "")" \
+		'{schema: 1, saved_at: $saved_at, saved_unix: $ts, socket: $socket, panes: .}' >"$file"
+	ln -sfn "$file" "$SNAP_DIR/last"
+	# Keep a short history. They are small, but there is no reason to hoard.
+	local old
+	old=$(ls -1t "$SNAP_DIR"/corral_*.json 2>/dev/null | tail -n +"$((CORRAL_SNAPSHOT_KEEP + 1))") || true
+	[[ -n $old ]] && xargs rm -f <<<"$old" 2>/dev/null
+	log "save: $(jq '[.panes[] | select(.agent != null)] | length' "$file") agent pane(s) -> $file"
+	printf '%s\n' "$file"
+	return 0
+}
+
+resume_cmd() {
+	local agent=$1 sid=$2
+	case $agent in
+		claude) printf 'claude --resume %s %s' "$sid" "$CORRAL_CLAUDE_FLAGS" ;;
+		codex) printf 'codex resume %s %s' "$sid" "$CORRAL_CODEX_FLAGS" ;;
+		*) return 1 ;;
+	esac
+}
+
+cmd_restore() {
+	local dry=0 detach=0 snapshot="" force=0
+	while (($#)); do
+		case $1 in
+			--dry-run) dry=1; shift ;;
+			--detach) detach=1; shift ;;
+			--force) force=1; shift ;;
+			--snapshot) snapshot=$2; shift 2 ;;
+			*) die "restore: unknown argument $1" ;;
+		esac
+	done
+	snapshot=${snapshot:-$SNAP_DIR/last}
+
+	if ((detach)); then
+		# resurrect runs post-restore-all synchronously and then paints "Tmux
+		# restore complete!", so the waiting and the staggered launches have to
+		# happen out of its way.
+		mkdir -p "$STATE_DIR"
+		nohup "$0" restore --snapshot "$snapshot" >>"$LOG" 2>&1 &
+		return 0
+	fi
+
+	[[ -r $snapshot ]] || { log "restore: no snapshot at $snapshot"; return 0; }
+	if [[ $CORRAL_RESTORE == off ]] && ((!dry)); then
+		log "restore: CORRAL_RESTORE=off, nothing to do"
+		return 0
+	fi
+	have_tmux || { log "restore: no tmux server"; return 0; }
+
+	((dry)) || sleep "$CORRAL_RESTORE_SETTLE"
+
+	local entries n=0
+	# Joined on US rather than tab for the same reason report parses that way:
+	# an entry with no transcript would otherwise shift the summary a field left
+	# and get skipped as "transcript gone".
+	entries=$(jq -r '.panes[]
+		| select(.agent != null and .session_id != null)
+		| [.target, .agent, .session_id, .cwd, (.transcript // ""), (.summary // "")]
+		| join("\u001f")' "$snapshot" 2>/dev/null) || entries=""
+	if [[ -z $entries ]]; then
+		log "restore: snapshot holds no resumable agent panes"
+		return 0
+	fi
+
+	# Exact-match lookup table rather than `display-message -t <target>`: tmux
+	# resolves a target with a stale window or pane index to the session's
+	# active pane instead of failing, which would replay somebody else's
+	# conversation into whatever pane happened to be current.
+	local panemap
+	panemap=$(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_id}' 2>/dev/null || echo "")
+
+	local target agent sid cwd transcript summary
+	while IFS=$US read -r target agent sid cwd transcript summary; do
+		[[ -n $target ]] || continue
+		local pane cur curpath cmdline
+		pane=$(awk -v t="$target" '$1 == t { print $2; exit }' <<<"$panemap")
+		if [[ -z $pane ]]; then
+			log "restore: skip $target ($agent) — pane was not restored"
+			continue
+		fi
+		if [[ $(tmux display-message -p -t "$pane" '#{@corral_restored}' 2>/dev/null) == 1 ]] && ((!force)); then
+			log "restore: skip $target — already handled by an earlier run"
+			continue
+		fi
+		curpath=$(tmux display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null || echo "")
+		if [[ -n $cwd && $curpath != "$cwd" ]] && ((!force)); then
+			log "restore: skip $target — cwd is $curpath, expected $cwd"
+			continue
+		fi
+		# A transcript that is gone means --resume would fail on a session id
+		# Claude has since dropped.
+		if [[ $agent == claude && -n $transcript && ! -f $transcript ]]; then
+			log "restore: skip $target — transcript gone ($transcript)"
+			continue
+		fi
+		if ! cmdline=$(resume_cmd "$agent" "$sid"); then
+			log "restore: skip $target — no resume recipe for agent '$agent'"
+			continue
+		fi
+		cmdline=$(printf '%s' "$cmdline" | sed 's/[[:space:]]*$//')
+		if ((dry)); then
+			printf '%-12s %-7s %s\n' "$target" "$agent" "$cmdline"
+			continue
+		fi
+
+		# Wait for the restored login shell to actually reach a prompt before
+		# typing at it: zsh -l plus a prompt framework is not instant, and keys
+		# sent too early are dropped on the floor.
+		local tries=0 ok=0
+		while ((tries < CORRAL_RESTORE_TRIES)); do
+			cur=$(tmux display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null || echo "")
+			if [[ $cur =~ ^-?(zsh|bash|sh|fish|dash|ksh|login)$ ]]; then ok=1; break; fi
+			sleep 1
+			tries=$((tries + 1))
+		done
+		if ((!ok)); then
+			log "restore: skip $target — pane busy with '$cur' after ${tries}s"
+			continue
+		fi
+
+		tmux send-keys -t "$pane" "$cmdline" 2>/dev/null || continue
+		if [[ $CORRAL_RESTORE == auto ]]; then
+			tmux send-keys -t "$pane" C-m 2>/dev/null || true
+			tmux set -p -t "$pane" @corral_state starting 2>/dev/null || true
+			tmux set -p -t "$pane" @corral_since "$(date +%s)" 2>/dev/null || true
+			tmux set -p -t "$pane" @corral_agent "$agent" 2>/dev/null || true
+			refresh_window_state "$pane"
+		fi
+		tmux set -p -t "$pane" @corral_restored 1 2>/dev/null || true
+		n=$((n + 1))
+		log "restore: $target ($agent) <- $cmdline   [$summary]"
+		sleep "$CORRAL_RESTORE_STAGGER"
+	done <<<"$entries"
+
+	if ((!dry)); then
+		log "restore: replayed $n agent pane(s) (mode=$CORRAL_RESTORE)"
+		tmux display-message "corral: resumed $n agent pane(s)" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+cmd_doctor() {
+	local ok="✔" bad="✘" warn="!"
+	printf 'corral doctor\n\n'
+	printf '  %s tmux %s\n' "$(have_tmux && echo "$ok" || echo "$bad")" "$(tmux -V 2>/dev/null | awk '{print $2}')"
+	printf '  %s jq %s\n' "$(command -v jq >/dev/null && echo "$ok" || echo "$bad")" "$(command -v jq || true)"
+	printf '  %s corral-hook %s\n' "$(command -v corral-hook >/dev/null && echo "$ok" || echo "$bad")" "$(command -v corral-hook || echo 'not on PATH')"
+
+	local settings=$HOME/.claude/settings.json wired
+	if [[ -r $settings ]]; then
+		wired=$(jq -r '[(.hooks // {}) | to_entries[]
+			| select([.value[]?.hooks[]?.command? // ""] | any(test("corral-hook")))
+			| .key] | sort | join(" ")' "$settings" 2>/dev/null) || wired=""
+		if [[ -n $wired ]]; then
+			printf '  %s claude hooks: %s\n' "$ok" "$wired"
+		else
+			printf '  %s claude hooks not installed (run: corral install-hooks)\n' "$bad"
+		fi
+	else
+		printf '  %s no ~/.claude/settings.json\n' "$warn"
+	fi
+
+	local h v
+	for h in @resurrect-hook-post-save-all @resurrect-hook-post-restore-all; do
+		v=$(tmux show-option -gqv "$h" 2>/dev/null || echo "")
+		if [[ $v == *corral* ]]; then
+			printf '  %s %s\n' "$ok" "$h"
+		else
+			printf '  %s %s not pointing at corral (value: %s)\n' "$bad" "$h" "${v:-unset}"
+		fi
+	done
+
+	# `show-hooks -g` with no name lists only a subset of the hook table, so ask
+	# for each hook by name or this reports a false negative.
+	local hook val
+	for hook in pane-focus-in pane-exited; do
+		val=$(tmux show-hooks -g "$hook" 2>/dev/null || echo "")
+		if [[ $val == *corral* ]]; then
+			printf '  %s %s hook\n' "$ok" "$hook"
+		else
+			printf '  %s %s hook not calling corral\n' "$warn" "$hook"
+		fi
+	done
+
+	printf '\n  records: %s in %s\n' "$(ls -1 "$PANES_DIR"/*.json 2>/dev/null | wc -l | tr -d ' ')" "$PANES_DIR"
+	if [[ -L $SNAP_DIR/last ]]; then
+		printf '  snapshot: %s\n            %s agent pane(s), saved %s\n' \
+			"$(readlink "$SNAP_DIR/last")" \
+			"$(jq '[.panes[] | select(.agent != null)] | length' "$SNAP_DIR/last" 2>/dev/null)" \
+			"$(jq -r .saved_at "$SNAP_DIR/last" 2>/dev/null)"
+	else
+		printf '  %s no snapshot yet (run: corral save)\n' "$warn"
+	fi
+	printf '  restore mode: %s\n  claude flags: %s\n\n' "$CORRAL_RESTORE" "$CORRAL_CLAUDE_FLAGS"
+	cmd_list --agents
+}
+
+# ---------------------------------------------------------------------------
+# install-hooks
+# ---------------------------------------------------------------------------
+_wire_hook() {
+	local file=$1 agent=$2 event=$3 matcher=$4 bin=$5 tmpf
+	[[ -f $file ]] || printf '{}\n' >"$file"
+	tmpf=$(mktemp "${TMPDIR:-/tmp}/corral-settings.XXXXXX")
+	if jq --arg event "$event" --arg matcher "$matcher" \
+		--arg cmd "$bin $agent $event" '
+		.hooks //= {} |
+		.hooks[$event] //= [] |
+		# Idempotent, and additive: anything already pointing at corral-hook is
+		# left alone, and entries installed by something else are never touched
+		# (herdr wires its own SessionStart hook into this same file).
+		if ([.hooks[$event][]?.hooks[]?.command? // ""] | any(test("corral-hook")))
+		then .
+		else .hooks[$event] += [
+			(if $matcher == "" then {} else {matcher: $matcher} end)
+			+ {hooks: [{type: "command", command: $cmd, timeout: 10}]}
+		] end' "$file" >"$tmpf" 2>/dev/null; then
+		mv -f "$tmpf" "$file"
+	else
+		rm -f "$tmpf"
+		die "failed to wire $event into $file"
+	fi
+}
+
+cmd_install_hooks() {
+	command -v jq >/dev/null || die "install-hooks needs jq"
+	local bin event
+	bin=$(command -v corral-hook || echo "$HOME/.local/bin/corral-hook")
+
+	local claude_settings=$HOME/.claude/settings.json
+	mkdir -p "$HOME/.claude"
+	[[ -f $claude_settings ]] && cp -p "$claude_settings" "$claude_settings.corral.bak.$(date +%Y%m%d-%H%M%S)"
+	# SessionStart and the tool events take a matcher; the rest do not.
+	_wire_hook "$claude_settings" claude SessionStart '*' "$bin"
+	_wire_hook "$claude_settings" claude PreToolUse '*' "$bin"
+	_wire_hook "$claude_settings" claude PostToolUse '*' "$bin"
+	for event in UserPromptSubmit Notification Stop SessionEnd; do
+		_wire_hook "$claude_settings" claude "$event" '' "$bin"
+	done
+	printf 'wired claude hooks in %s\n' "$claude_settings"
+
+	local codex_hooks=$HOME/.codex/hooks.json
+	if [[ -d $HOME/.codex ]]; then
+		[[ -f $codex_hooks ]] && cp -p "$codex_hooks" "$codex_hooks.corral.bak.$(date +%Y%m%d-%H%M%S)"
+		_wire_hook "$codex_hooks" codex SessionStart '' "$bin"
+		printf 'wired codex hooks in %s\n' "$codex_hooks"
+		printf 'note: codex exposes only SessionStart today, so codex panes get\n'
+		printf '      identity and resume, but not live working/idle state.\n'
+	fi
+}
+
+usage() {
+	cat <<'USAGE'
+corral — what is running in every tmux pane, and how to get the agents back.
+
+  corral list [--json] [--agents]   inventory of every pane (JSON is the API)
+  corral status                     one-line summary for the tmux status bar
+  corral report --pane %7 --agent X --state working [--detail ...]
+                                    ingest point for any state writer
+  corral seen [pane]                clear a pane's "done, unseen" badge
+  corral refresh                    reconcile panes whose agent died silently
+  corral gc                         drop records for panes/servers that are gone
+  corral save                       snapshot agent identity by pane coordinates
+  corral restore [--dry-run] [--force] [--detach] [--snapshot FILE]
+                                    replay resume commands into restored panes
+  corral doctor                     check the wiring
+  corral install-hooks              wire corral-hook into claude/codex settings
+
+State: ~/.local/state/corral   Config: ~/.config/corral/config.sh
+USAGE
+}
+
+main() {
+	local sub=${1:-list}
+	(($#)) && shift
+	case $sub in
+		report) cmd_report "$@" ;;
+		list) cmd_list "$@" ;;
+		status) cmd_status "$@" ;;
+		seen) cmd_seen "$@" ;;
+		refresh) cmd_refresh "$@" ;;
+		gc) cmd_gc "$@" ;;
+		save) cmd_save "$@" ;;
+		restore) cmd_restore "$@" ;;
+		doctor) cmd_doctor "$@" ;;
+		install-hooks) cmd_install_hooks "$@" ;;
+		-h | --help | help) usage ;;
+		*) usage; exit 1 ;;
+	esac
+}
+
+main "$@"

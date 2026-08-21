@@ -301,5 +301,45 @@ set -ag status-right "#({{ .chezmoi.homeDir }}/.config/tmux/plugins/tmux-continu
 # else -- claude, ssh, dev servers -- comes back as a plain shell in the right
 # directory. Add to that with @resurrect-processes.
 
+# --- corral: agent tracking, and an agent-aware restore ----------------------
+# resurrect brings the pane tree back with the right cwd, but an agent pane
+# comes back as a bare shell: claude rewrites its argv to "claude", so nothing
+# in the dump records which conversation the pane was holding. corral keeps that
+# missing piece -- Claude Code hooks push per-pane state into tmux pane options
+# (@corral_state/@corral_agent/@corral_session) and the session id into
+# ~/.local/state/corral -- then snapshots it from resurrect's own post-save hook
+# so both files describe the same instant, and replays `claude --resume <id>`
+# into the matching pane after resurrect restores. `corral doctor` checks the
+# whole chain; `corral list` shows what is running where.
+#
+# --detach because post-restore-all runs synchronously inside resurrect: the
+# wait for restored login shells to reach a prompt, and the stagger between
+# launches, have to happen out of its way.
+set -g @resurrect-hook-post-save-all '{{ .chezmoi.homeDir }}/.local/bin/corral save >/dev/null 2>&1'
+set -g @resurrect-hook-post-restore-all '{{ .chezmoi.homeDir }}/.local/bin/corral restore --detach >/dev/null 2>&1'
+
+# Looking at a pane that finished clears its "done, unseen" badge. focus-events
+# is already on (Claude Code needs it), so this costs nothing extra.
+set-hook -g pane-focus-in 'run-shell -b "{{ .chezmoi.homeDir }}/.local/bin/corral seen #{pane_id}"'
+
+# An agent that is killed rather than exited leaves its last state behind, and
+# records outlive their panes. Reconcile both when a pane goes away.
+set-hook -g pane-exited 'run-shell -b "{{ .chezmoi.homeDir }}/.local/bin/corral refresh"'
+
+# No corral surface is enabled here on purpose: corral is the tracking layer,
+# `corral list --json` is its API, and the display is a separate decision.
+# Three that drop straight in when wanted:
+#
+#   per-window glyph, zero polling -- the hook writes the option, the format
+#   reads it, nothing runs on redraw:
+#     set -g window-status-format "#[fg=#687686] #I:#W#{?#{==:#{@corral_win_state},blocked}, ▲,}#{?#{==:#{@corral_win_state},done}, ✓,}#{?#{==:#{@corral_win_state},working}, ●,} "
+#
+#   counts on the right, one process per status-interval:
+#     set -ag status-right "#(~/.local/bin/corral status) "
+#
+#   attention-ranked picker on the `prefix + a` slot vox used to own (rows come
+#   out of corral sorted blocked > done > working > idle; field 2 is the target):
+#     bind a display-popup -E -w 80% -h 70% "~/.local/bin/corral list --agents | fzf --reverse --header-lines=1 --preview 'tmux capture-pane -ep -t {2}' --preview-window=down:60% | awk '{print \$2}' | xargs -r tmux switch-client -t"
+
 # Initialize TMUX plugin manager (keep this line at the very bottom of tmux.conf)
 run "$HOME/.config/tmux/plugins/tpm/tpm"

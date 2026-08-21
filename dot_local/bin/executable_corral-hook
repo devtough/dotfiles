@@ -1,0 +1,160 @@
+#!/bin/sh
+# corral-hook — bridge an agent CLI's hook system into corral's pane state.
+#
+# Invoked as:  corral-hook <agent> <Event>          (payload JSON on stdin)
+# Wired into ~/.claude/settings.json and ~/.codex/hooks.json by
+# `corral install-hooks`, which leaves pre-existing entries (herdr's, for one)
+# alone.
+#
+# Why this is split from `corral` itself:
+#
+#   * The hot events — UserPromptSubmit, PreToolUse, PostToolUse — fire on every
+#     tool call of every live agent on the machine. That path stays in /bin/sh
+#     and touches nothing but tmux pane options: one read, and a write only when
+#     the state actually changed. State that matters solely while the server is
+#     up has no business being written to disk hundreds of times a turn.
+#
+#   * SessionStart / Notification / SessionEnd are rare and carry data that
+#     cannot be derived from the environment (session id, transcript path,
+#     notification text), so they hand the payload to `corral report`, which
+#     writes the durable per-pane record. That record is the only reason
+#     `claude --resume <id>` is possible after a reboot: the claude process
+#     rewrites its argv to a bare "claude", so neither ps nor tmux-resurrect can
+#     recover which conversation a pane was holding.
+#
+#   * Every path exits 0 and swallows its output. A hook that fails, prints, or
+#     blocks is a hook that breaks the agent it is watching.
+#
+# SubagentStop is deliberately NOT wired. It is a completion event that can fire
+# after the main turn has already stopped, so mapping it to a state would revive
+# a pane that is correctly sitting idle. (herdr's integration learned the same
+# lesson the hard way; the comment in its claude hook says as much.)
+
+set -u
+
+agent=${1:-unknown}
+event=${2:-}
+
+STATE_DIR=${CORRAL_STATE_DIR:-$HOME/.local/state/corral}
+PIDMAP_DIR=$STATE_DIR/pidpane
+
+# Drain the payload. Closing stdin unread would hand the agent an EPIPE on a
+# path where it is doing nothing wrong.
+payload=""
+case "$event" in
+	SessionStart | Notification | SessionEnd)
+		payload=$(mktemp "${TMPDIR:-/tmp}/corral-hook.XXXXXX" 2>/dev/null) || payload=""
+		if [ -n "$payload" ]; then
+			cat >"$payload" 2>/dev/null || true
+		else
+			cat >/dev/null 2>&1 || true
+		fi
+		;;
+	*)
+		cat >/dev/null 2>&1 || true
+		;;
+esac
+cleanup() { [ -n "$payload" ] && rm -f "$payload"; return 0; }
+trap cleanup EXIT HUP INT TERM
+
+command -v tmux >/dev/null 2>&1 || exit 0
+
+# --- which pane are we in? --------------------------------------------------
+# $TMUX_PANE is the cheap answer, but an agent does not necessarily export it
+# into the processes it spawns for hooks, so fall back to walking up the
+# parent chain until a pid matches the process tmux has at the root of a pane.
+# The answer is cached under the agent's own pid: it cannot change for the life
+# of that agent, and the walk then costs one file read per event.
+pane=${TMUX_PANE:-}
+if [ -z "$pane" ]; then
+	cache=$PIDMAP_DIR/$PPID
+	if [ -r "$cache" ]; then
+		read -r pane <"$cache" 2>/dev/null || pane=""
+	fi
+	if [ -z "$pane" ]; then
+		map=$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' 2>/dev/null) || exit 0
+		p=$PPID
+		depth=0
+		while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$depth" -lt 12 ]; do
+			pane=$(printf '%s\n' "$map" | awk -v pid="$p" '$1 == pid { print $2; exit }')
+			[ -n "$pane" ] && break
+			p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+			depth=$((depth + 1))
+		done
+		[ -n "$pane" ] && {
+			mkdir -p "$PIDMAP_DIR" 2>/dev/null &&
+				printf '%s\n' "$pane" >"$PIDMAP_DIR/$PPID" 2>/dev/null
+		}
+	fi
+fi
+[ -n "$pane" ] || exit 0
+
+# Event -> state. Anything unmapped is ignored rather than guessed at.
+case "$event" in
+	SessionStart) state=idle ;;
+	UserPromptSubmit | PreToolUse | PostToolUse) state=working ;;
+	PreCompact) state=working ;;
+	Notification) state=blocked ;;
+	Stop) state=done ;;
+	SessionEnd) state=gone ;;
+	*) exit 0 ;;
+esac
+
+# Rare events carry data worth parsing; hand them to the bash side and stop.
+case "$event" in
+	SessionStart | Notification | SessionEnd)
+		corral report --pane "$pane" --agent "$agent" --state "$state" \
+			--event "$event" --payload "$payload" >/dev/null 2>&1 || true
+		exit 0
+		;;
+esac
+
+# --- hot path ---------------------------------------------------------------
+# A whole turn's worth of PostToolUse events collapses into a single tmux round
+# trip each, because the write only happens on a real transition.
+#
+# Two timestamps, and they answer different questions. @corral_since is when the
+# state last changed ("working for 40 minutes"). @corral_seen_at is when an event
+# last arrived, i.e. proof of life — without it a long turn is indistinguishable
+# from an agent that was killed mid-tool-call, and readers would flag every real
+# 40-minute turn as stale. It is refreshed at most once a minute so a chatty turn
+# still costs one tmux round trip per event, not two.
+prev=$(tmux display-message -p -t "$pane" '#{@corral_state}|#{@corral_seen_at}' 2>/dev/null) || exit 0
+now=$(date +%s)
+
+if [ "${prev%%|*}" = "$state" ]; then
+	seen=${prev##*|}
+	case "$seen" in
+		'' | *[!0-9]*) seen=0 ;;
+	esac
+	[ "$((now - seen))" -ge 60 ] &&
+		tmux set -p -t "$pane" @corral_seen_at "$now" 2>/dev/null
+	exit 0
+fi
+
+tmux set -p -t "$pane" @corral_state "$state" \; \
+	set -p -t "$pane" @corral_since "$now" \; \
+	set -p -t "$pane" @corral_seen_at "$now" \; \
+	set -p -t "$pane" @corral_agent "$agent" \; \
+	set -p -t "$pane" @corral_detail "" 2>/dev/null || exit 0
+
+# Roll the pane states up to a window-level option so a status-bar format can
+# show one glyph per window without shelling out on every redraw.
+best=""
+best_rank=0
+for s in $(tmux list-panes -t "$pane" -F '#{@corral_state}' 2>/dev/null); do
+	case "$s" in
+		blocked) r=4 ;;
+		done) r=3 ;;
+		working) r=2 ;;
+		idle | starting) r=1 ;;
+		*) r=0 ;;
+	esac
+	[ "$r" -gt "$best_rank" ] && {
+		best_rank=$r
+		best=$s
+	}
+done
+tmux set -w -t "$pane" @corral_win_state "$best" 2>/dev/null || true
+
+exit 0
