@@ -141,16 +141,23 @@ A Claude Code subagent, a background job, or a nested session runs *inside* the
 pane's agent rather than in the pane. Left alone, their events report the pane
 as working while the interactive session sits idle, and their SessionStart
 stamps the pane's restore record with the wrong session id — a reboot would then
-resume a background job instead of the conversation on screen. corral drops
-reports carrying `agent_id` (subagent) or `CLAUDE_CODE_CHILD_SESSION=1`, and
-codex reports whose session id disagrees with `CODEX_THREAD_ID`, which is the
-same guard herdr's codex integration uses.
+resume a background job instead of the conversation on screen.
 
-That marker is only trusted on hook-originated reports. On a hand-run `corral
-report` or a scan the environment belongs to whatever shell invoked corral, and
-an inherited marker would silently drop every report — the same shape as the
-herdr server env incident. `corral doctor` counts pane shells carrying the
-marker, because an agent started in one of those saves no transcript either.
+Ownership is decided by process shape: the pane's agent is the pane process
+itself, or one of its direct children. A hook whose parent is anything else is
+refused, and the verdict is cached under that parent's pid, so it costs one file
+read per event.
+
+The tempting shortcut — trusting `CLAUDE_CODE_CHILD_SESSION` in the environment —
+was tried here and is wrong. That marker is inherited: tmux on this machine was
+started from inside a Claude session, so every agent launched by the `prefix + \`
+split binding carries it, and honouring it silenced all five real sessions at
+once while leaving genuine background jobs indistinguishable from them. Process
+shape cannot be inherited by accident.
+
+Two things process shape cannot see are still checked on the payload: a
+subagent's event carries `agent_id`, and codex hands a child its parent's thread
+in `CODEX_THREAD_ID` — the same guard herdr's codex integration uses.
 
 ## Adding a writer
 

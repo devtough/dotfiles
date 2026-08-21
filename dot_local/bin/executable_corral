@@ -212,17 +212,10 @@ cmd_report() {
 	have_tmux || return 0
 	tmux display-message -p -t "$pane" '#{pane_id}' >/dev/null 2>&1 || return 0
 
-	# A pane speaks with one voice: the session a human is looking at. Anything
-	# nested inside it — a Claude Code subagent, a background job, a codex
-	# thread spawned from another — would otherwise overwrite both the pane's
-	# state and, far worse, its restore identity.
-	#
-	# Gated on $event, i.e. only for reports a hook made: there the environment
-	# belongs to the agent that is speaking. For `corral scan` or a hand-run
-	# `corral report` the environment is whatever shell happened to invoke us —
-	# a marker inherited from an unrelated Claude session would silently drop
-	# every report, which is exactly how the herdr server env poisoning bug hid.
-	[[ -n $event && $agent == claude && ${CLAUDE_CODE_CHILD_SESSION:-} == 1 ]] && return 0
+	# A pane speaks with one voice. corral-hook already refuses to report for a
+	# pane it does not own, decided by process shape; these two catch what
+	# process shape cannot see — a subagent's event carries agent_id, and codex
+	# hands a child its parent's thread in CODEX_THREAD_ID.
 	if [[ -n $payload && -s $payload ]] && command -v jq >/dev/null 2>&1; then
 		# agent_id marks a subagent's event. herdr learned to drop these too.
 		[[ $(jq -r 'if (.agent_id // "") == "" then "main" else "sub" end' <"$payload" 2>/dev/null) == sub ]] && return 0
@@ -784,39 +777,6 @@ cmd_doctor() {
 			"$(jq -r '.agents | keys | join(", ")' "$CORRAL_RULES" 2>/dev/null)" "$CORRAL_RULES"
 	else
 		printf '  %s no scan rules at %s — agents without hooks stay unknown\n' "$warn" "$CORRAL_RULES"
-	fi
-
-	# The failure this catches has bitten this machine before: a long-lived
-	# process started from inside a Claude session captures
-	# CLAUDE_CODE_CHILD_SESSION=1, whatever it spawns inherits it, and from then
-	# on those agents both stop saving transcripts and — for corral — classify
-	# every hook as a child and report nothing. Same root cause as the herdr
-	# transcript-saving incident.
-	#
-	# Measured on the pane shells, not on the server process. The tmux server
-	# here does carry the marker in its own environment and in
-	# `show-environment -g`, and it still does not reach a newly spawned pane;
-	# checking the server would cry wolf on every machine where tmux was ever
-	# started from inside an agent.
-	# Measured on the agent process, not on the pane shell and not on the tmux
-	# server. The server here carries the marker in its own environment and in
-	# `show-environment -g` without it ever reaching a freshly spawned pane, and
-	# the pane shells are clean; what actually carries it is a claude started
-	# from inside another claude session, which is the process whose hooks then
-	# go quiet.
-	local poisoned=0 pp kid
-	for pp in $(tmux list-panes -a -F '#{pane_pid}' 2>/dev/null); do
-		kid=$(pgrep -P "$pp" 2>/dev/null | head -1) || kid=""
-		[[ -n $kid ]] || continue
-		ps -Ewwwp "$kid" 2>/dev/null | tr ' ' '\n' \
-			| grep -q '^CLAUDE_CODE_CHILD_SESSION=1' && poisoned=$((poisoned + 1))
-	done
-	if [[ ${poisoned:-0} -gt 0 ]]; then
-		printf '  %s %s agent(s) run with CLAUDE_CODE_CHILD_SESSION=1 inherited:\n' "$warn" "$poisoned"
-		printf '    corral reads them as nested sessions, so their hooks report nothing\n'
-		printf '    and they have no restore identity — `corral scan` still tracks their\n'
-		printf '    state off the screen. Claude also disables transcript saving there.\n'
-		printf '    Fix by starting claude from a shell without the marker.\n'
 	fi
 
 	printf '\n  records: %s in %s\n' "$(ls -1 "$PANES_DIR"/*.json 2>/dev/null | wc -l | tr -d ' ')" "$PANES_DIR"

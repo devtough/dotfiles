@@ -59,34 +59,42 @@ trap cleanup EXIT HUP INT TERM
 
 command -v tmux >/dev/null 2>&1 || exit 0
 
-# Only the session a human is looking at gets to speak for the pane. A Claude
-# Code background job or nested session runs inside the pane's agent, not in the
-# pane, and its tool calls would otherwise report the pane as working while the
-# interactive session sits idle at its prompt — and worse, its SessionStart
-# would stamp the pane's restore record with the child's session id, so a reboot
-# would resume the background job instead of the conversation on screen.
-# (herdr's codex integration guards the same case via CODEX_THREAD_ID; the
-# subagent half of it is handled in `corral report`, which can see agent_id.)
+# --- which pane are we in, and are we the pane's own agent? -----------------
 #
-# Failure direction is deliberate: if this marker is ever inherited by a real
-# interactive session — it has happened, see the herdr server env note — the
-# pane goes untracked rather than mistracked, and `corral doctor` says so.
-[ "${CLAUDE_CODE_CHILD_SESSION:-}" = "1" ] && exit 0
+# Two questions, one answer, cached together under the agent's pid because
+# neither can change for the life of that process. $PPID here is the agent that
+# spawned this hook.
+#
+# The pane: $TMUX_PANE when the agent exports it, otherwise walk up the parent
+# chain until a pid matches the process tmux has at the root of a pane.
+#
+# The ownership: only the pane's own agent gets to speak for the pane. A
+# subagent, a background job or a nested claude runs *inside* that agent, and
+# its events would otherwise report the pane as working while the session on
+# screen sits idle — worse, its SessionStart would stamp the pane's restore
+# record with the wrong session id, so a reboot would resume the background job
+# instead of the conversation the pane is showing.
+#
+# Ownership is decided by process shape, not by an environment marker. The
+# obvious marker, CLAUDE_CODE_CHILD_SESSION, is inherited: tmux on this machine
+# was started from inside a Claude session, so every agent launched by the
+# `prefix + \` split binding carries it, and trusting it silenced all five real
+# sessions at once. Process shape cannot be inherited by accident: the pane's
+# agent is the pane process itself, or its first child when the pane runs a
+# shell.
+cache=$PIDMAP_DIR/$PPID
+pane=""
+if [ -r "$cache" ]; then
+	read -r pane <"$cache" 2>/dev/null || pane=""
+	# "-" is a cached "not this pane's agent, stay quiet".
+	[ "$pane" = "-" ] && exit 0
+fi
 
-# --- which pane are we in? --------------------------------------------------
-# $TMUX_PANE is the cheap answer, but an agent does not necessarily export it
-# into the processes it spawns for hooks, so fall back to walking up the
-# parent chain until a pid matches the process tmux has at the root of a pane.
-# The answer is cached under the agent's own pid: it cannot change for the life
-# of that agent, and the walk then costs one file read per event.
-pane=${TMUX_PANE:-}
 if [ -z "$pane" ]; then
-	cache=$PIDMAP_DIR/$PPID
-	if [ -r "$cache" ]; then
-		read -r pane <"$cache" 2>/dev/null || pane=""
-	fi
-	if [ -z "$pane" ]; then
-		map=$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' 2>/dev/null) || exit 0
+	map=$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' 2>/dev/null) || exit 0
+	if [ -n "${TMUX_PANE:-}" ]; then
+		pane=$TMUX_PANE
+	else
 		p=$PPID
 		depth=0
 		while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$depth" -lt 12 ]; do
@@ -95,13 +103,30 @@ if [ -z "$pane" ]; then
 			p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
 			depth=$((depth + 1))
 		done
-		[ -n "$pane" ] && {
-			mkdir -p "$PIDMAP_DIR" 2>/dev/null &&
-				printf '%s\n' "$pane" >"$PIDMAP_DIR/$PPID" 2>/dev/null
-		}
+	fi
+	[ -n "$pane" ] || exit 0
+
+	pane_pid=$(tmux display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null) || pane_pid=""
+	owner=""
+	if [ -n "$pane_pid" ]; then
+		if [ "$PPID" = "$pane_pid" ]; then
+			owner=yes
+		else
+			# Any direct child, not just the first: a pane shell can have
+			# more than one, and picking the lowest pid would disown the
+			# agent whenever something else was started beside it. A nested
+			# agent is a grandchild, so it still does not qualify.
+			pgrep -P "$pane_pid" 2>/dev/null | grep -qx "$PPID" && owner=yes
+		fi
+	fi
+	mkdir -p "$PIDMAP_DIR" 2>/dev/null || true
+	if [ "$owner" = yes ]; then
+		printf '%s\n' "$pane" >"$cache" 2>/dev/null || true
+	else
+		printf -- '-\n' >"$cache" 2>/dev/null || true
+		exit 0
 	fi
 fi
-[ -n "$pane" ] || exit 0
 
 # Event -> state. Anything unmapped is ignored rather than guessed at.
 case "$event" in
@@ -146,10 +171,14 @@ if [ "${prev%%|*}" = "$state" ]; then
 	exit 0
 fi
 
+# @corral_source is part of the same round trip, and it is not decoration:
+# `corral scan` reads it to know this pane has an agent that speaks for itself,
+# and leaves the state alone while the hook keeps talking.
 tmux set -p -t "$pane" @corral_state "$state" \; \
 	set -p -t "$pane" @corral_since "$now" \; \
 	set -p -t "$pane" @corral_seen_at "$now" \; \
 	set -p -t "$pane" @corral_agent "$agent" \; \
+	set -p -t "$pane" @corral_source hook \; \
 	set -p -t "$pane" @corral_detail "" 2>/dev/null || exit 0
 
 # Roll the pane states up to a window-level option so a status-bar format can
