@@ -72,11 +72,15 @@ CONFIG=${CORRAL_CONFIG:-$HOME/.config/corral/config.sh}
 # stale by readers: the agent was killed, or it is wedged.
 : "${CORRAL_STALE_SECS:=1800}"
 : "${CORRAL_SNAPSHOT_KEEP:=20}"
+# Screen/title rules for agents that cannot report for themselves, and how much
+# of the screen `corral scan` reads.
+: "${CORRAL_RULES:=$HOME/.config/corral/rules.json}"
+: "${CORRAL_SCAN_LINES:=14}"
 
 US=$'\x1f'
 
 # Field order below is load-bearing: the jq program indexes it positionally.
-PANE_FMT="#{pane_id}${US}#{session_name}${US}#{window_index}${US}#{pane_index}${US}#{window_name}${US}#{pane_current_command}${US}#{pane_current_path}${US}#{pane_title}${US}#{@corral_agent}${US}#{@corral_state}${US}#{@corral_since}${US}#{@corral_detail}${US}#{@corral_session}${US}#{pane_active}${US}#{window_active}${US}#{pane_pid}${US}#{pane_tty}${US}#{pane_dead}${US}#{@corral_seen_at}"
+PANE_FMT="#{pane_id}${US}#{session_name}${US}#{window_index}${US}#{pane_index}${US}#{window_name}${US}#{pane_current_command}${US}#{pane_current_path}${US}#{pane_title}${US}#{@corral_agent}${US}#{@corral_state}${US}#{@corral_since}${US}#{@corral_detail}${US}#{@corral_session}${US}#{pane_active}${US}#{window_active}${US}#{pane_pid}${US}#{pane_tty}${US}#{pane_dead}${US}#{@corral_seen_at}${US}#{@corral_source}"
 
 die() { printf 'corral: %s\n' "$*" >&2; exit 1; }
 
@@ -154,6 +158,10 @@ inventory() {
 				tty: $f[16],
 				dead: ($f[17] == "1"),
 				seen_at: (if ($f[18] // "") == "" then null else ($f[18] | tonumber) end),
+				# Where the state came from: "hook" is the agent telling us directly,
+				# "scan" is corral reading the pane title or screen, and null means
+				# nobody has said anything about this pane at all.
+				state_source: (if ($f[19] // "") == "" then null else $f[19] end),
 				# The agent exited without a SessionEnd — killed, crashed, or
 				# suspended. tmux showing a shell in the foreground again is the
 				# tell, and it means the state left behind is a lie.
@@ -183,7 +191,7 @@ inventory() {
 #     corral report --pane %7 --agent codex --state working [--detail "..."]
 # ---------------------------------------------------------------------------
 cmd_report() {
-	local pane="" agent="" state="" detail="" event="" payload="" session_id="" transcript="" cwd=""
+	local pane="" agent="" state="" detail="" event="" payload="" session_id="" transcript="" cwd="" source=""
 	while (($#)); do
 		case $1 in
 			--pane) pane=$2; shift 2 ;;
@@ -191,6 +199,7 @@ cmd_report() {
 			--state) state=$2; shift 2 ;;
 			--detail) detail=$2; shift 2 ;;
 			--event) event=$2; shift 2 ;;
+			--source) source=$2; shift 2 ;;
 			--payload) payload=$2; shift 2 ;;
 			--session-id) session_id=$2; shift 2 ;;
 			--transcript) transcript=$2; shift 2 ;;
@@ -202,6 +211,29 @@ cmd_report() {
 	[[ -n $pane ]] || return 0
 	have_tmux || return 0
 	tmux display-message -p -t "$pane" '#{pane_id}' >/dev/null 2>&1 || return 0
+
+	# A pane speaks with one voice: the session a human is looking at. Anything
+	# nested inside it — a Claude Code subagent, a background job, a codex
+	# thread spawned from another — would otherwise overwrite both the pane's
+	# state and, far worse, its restore identity.
+	#
+	# Gated on $event, i.e. only for reports a hook made: there the environment
+	# belongs to the agent that is speaking. For `corral scan` or a hand-run
+	# `corral report` the environment is whatever shell happened to invoke us —
+	# a marker inherited from an unrelated Claude session would silently drop
+	# every report, which is exactly how the herdr server env poisoning bug hid.
+	[[ -n $event && $agent == claude && ${CLAUDE_CODE_CHILD_SESSION:-} == 1 ]] && return 0
+	if [[ -n $payload && -s $payload ]] && command -v jq >/dev/null 2>&1; then
+		# agent_id marks a subagent's event. herdr learned to drop these too.
+		[[ $(jq -r 'if (.agent_id // "") == "" then "main" else "sub" end' <"$payload" 2>/dev/null) == sub ]] && return 0
+		# codex sets CODEX_THREAD_ID in the environment it hands to a child; a
+		# payload whose session differs from it is that child talking.
+		if [[ -n $event && $agent == codex && -n ${CODEX_THREAD_ID:-} ]]; then
+			local p_thread
+			p_thread=$(jq -r '.session_id // ""' <"$payload" 2>/dev/null) || p_thread=""
+			[[ -n $p_thread && $p_thread != "${CODEX_THREAD_ID}" ]] && return 0
+		fi
+	fi
 
 	# Pull what the payload carries, when there is one.
 	if [[ -n $payload && -s $payload ]] && command -v jq >/dev/null 2>&1; then
@@ -218,10 +250,32 @@ cmd_report() {
 			[[ -z $detail ]] && detail=${p_msg:-}
 		fi
 	fi
-	# Last resort for a claude hook whose payload lost the id. Deliberately not
-	# applied to other agents: a writer invoked from inside a Claude Code shell
-	# would otherwise stamp claude's session id onto somebody else's pane.
-	[[ $agent == claude && -z $session_id && -n ${CLAUDE_CODE_SESSION_ID:-} ]] && session_id=$CLAUDE_CODE_SESSION_ID
+	# Last resort for a claude hook whose payload lost the id, and only for a
+	# hook: on any other path the environment belongs to whatever shell invoked
+	# corral. Ungated, a single `corral scan` stamped every pane on this machine
+	# with the scanning session's id, so all five would have resumed the same
+	# conversation after a reboot.
+	[[ -n $event && $agent == claude && -z $session_id && -n ${CLAUDE_CODE_SESSION_ID:-} ]] &&
+		session_id=$CLAUDE_CODE_SESSION_ID
+
+	# Claude Code fires Notification for two unrelated things: "I need your
+	# permission to run X", which is a blocker, and "I have been waiting for
+	# your input", which is just a nudge about a pane that is already idle.
+	# Mapping both to blocked pins a finished pane at blocked forever, since
+	# nothing else fires until the next prompt — observed here on two panes that
+	# had been sitting at an empty prompt box for 19 hours.
+	if [[ $event == Notification ]]; then
+		# macOS ships bash 3.2, so no ${var,,}.
+		local msg
+		msg=$(printf '%s' "$detail" | tr '[:upper:]' '[:lower:]')
+		if [[ $msg == *permission* || $msg == *approve* || $msg == *allow* \
+			|| $msg == *trust* || $msg == *confirm* ]]; then
+			state=blocked
+		else
+			# Leave the state alone; the detail and the liveness stamp still land.
+			state=""
+		fi
+	fi
 
 	local now target
 	now=$(date +%s)
@@ -231,16 +285,24 @@ cmd_report() {
 	if [[ $state == gone ]]; then
 		rm -f "$(record_path "$pane")"
 		local opt
-		for opt in @corral_state @corral_agent @corral_since @corral_seen_at @corral_detail @corral_session; do
+		for opt in @corral_state @corral_agent @corral_since @corral_seen_at @corral_source @corral_detail @corral_session; do
 			tmux set -p -u -t "$pane" "$opt" 2>/dev/null || true
 		done
 		refresh_window_state "$pane"
 		return 0
 	fi
 
-	tmux set -p -t "$pane" @corral_state "$state" 2>/dev/null || true
-	tmux set -p -t "$pane" @corral_since "$now" 2>/dev/null || true
+	# An empty state means "I have something to say about this pane, but not
+	# about what it is doing" — the detail and the liveness stamp still land.
+	if [[ -n $state ]]; then
+		tmux set -p -t "$pane" @corral_state "$state" 2>/dev/null || true
+		tmux set -p -t "$pane" @corral_since "$now" 2>/dev/null || true
+	fi
 	tmux set -p -t "$pane" @corral_seen_at "$now" 2>/dev/null || true
+	# Every event carries provenance, so a reader can tell a state the agent
+	# announced from one corral inferred off the pane's title or screen.
+	[[ -z $source ]] && { [[ -n $event ]] && source=hook || source=api; }
+	tmux set -p -t "$pane" @corral_source "$source" 2>/dev/null || true
 	[[ -n $agent ]] && tmux set -p -t "$pane" @corral_agent "$agent" 2>/dev/null
 	tmux set -p -t "$pane" @corral_detail "${detail:0:120}" 2>/dev/null || true
 	[[ -n $session_id ]] && tmux set -p -t "$pane" @corral_session "$session_id" 2>/dev/null
@@ -248,7 +310,9 @@ cmd_report() {
 
 	# The durable record only earns its keep when there is an identity worth
 	# resuming; a bare state change stays in tmux and dies with the server.
-	if [[ -n $session_id ]]; then
+	# A scan reads the screen: it can tell what a pane is doing, never which
+	# conversation it holds, so it never writes identity.
+	if [[ -n $session_id && $source != scan ]]; then
 		mkdir -p "$PANES_DIR"
 		local rec tmpf prev
 		rec=$(record_path "$pane")
@@ -329,13 +393,15 @@ cmd_list() {
 			elif $a < 86400 then "\(($a / 3600) | floor)h"
 			else "\(($a / 86400) | floor)d" end;
 		(["", "TARGET", "AGENT", "STATE", "AGE", "WHAT", "CWD"]
-			| (.[0] | pad(2)) + (.[1] | pad(10)) + (.[2] | pad(8)) + (.[3] | pad(9))
+			| (.[0] | pad(2)) + (.[1] | pad(10)) + (.[2] | pad(8)) + (.[3] | pad(10))
 			+ (.[4] | pad(6)) + (.[5] | pad(44)) + .[6]),
 		(.[] |
 			(glyph(.state) | pad(2))
 			+ (.target | pad(10))
 			+ ((.agent // "-") | pad(8))
-			+ (((.state // "-") + (if .stale then "!" else "" end)) | pad(9))
+			+ (((.state // "-")
+				+ (if .stale then "!" else "" end)
+				+ (if .state_source == "scan" then "~" else "" end)) | pad(10))
 			+ (humanage(.age) | pad(6))
 			+ ((if (.summary // "") != "" then .summary else .command end) | pad(44))
 			+ (.cwd | sub("^" + env.HOME; "~")))' <<<"$inv"
@@ -374,6 +440,91 @@ cmd_seen() {
 }
 
 # ---------------------------------------------------------------------------
+# scan: infer state for agents that cannot report for themselves
+#
+# Not every agent has hooks. codex exposes only SessionStart, so it can say who
+# it is but never what it is doing, and most of the rest say nothing at all.
+# herdr solves this for ~20 agents by reading the pane, and the cheapest half of
+# that trick works here too: the OSC title. tmux already hands it over as
+# #{pane_title}, and codex puts a spinner in it while working and "Action
+# Required" in it when it wants you, so most states cost no capture-pane at all.
+# Screen rules cover what a title cannot say — approval prompts, trust dialogs.
+#
+# Hooks always win. A pane whose state came from its own agent is skipped unless
+# that agent has gone quiet past CORRAL_STALE_SECS, so a scan can correct a
+# killed agent but never contradict a live one.
+# ---------------------------------------------------------------------------
+cmd_scan() {
+	have_tmux || return 0
+	local pane_only="" dry=0
+	while (($#)); do
+		case $1 in
+			--pane) pane_only=$2; shift 2 ;;
+			--dry-run) dry=1; shift ;;
+			*) die "scan: unknown argument $1" ;;
+		esac
+	done
+	if [[ ! -r $CORRAL_RULES ]]; then
+		log "scan: no rules file at $CORRAL_RULES"
+		return 0
+	fi
+	local rules now candidates
+	rules=$(cat "$CORRAL_RULES")
+	now=$(date +%s)
+
+	# Reuse the inventory instead of re-deriving which panes hold agents: it
+	# already knows that, and it already knows where each state came from.
+	candidates=$(inventory | jq -r --argjson now "$now" --argjson stale "$CORRAL_STALE_SECS" '
+		.[]
+		| select(.agent != null)
+		| select((.state_source != "hook") or (((.seen_at // .since // 0) + $stale) < $now))
+		| [.pane_id, .agent, .title, (.state // "")] | join("\u001f")')
+	[[ -z $candidates ]] && return 0
+
+	local pane agent title state screen verdict new_state rule_id
+	while IFS=$US read -r pane agent title state; do
+		[[ -n $pane ]] || continue
+		[[ -n $pane_only && $pane != "$pane_only" ]] && continue
+		screen=$(tmux capture-pane -p -t "$pane" 2>/dev/null \
+			| grep -v '^[[:space:]]*$' | tail -n "$CORRAL_SCAN_LINES") || screen=""
+
+		verdict=$(jq -rn --argjson rules "$rules" --arg agent "$agent" \
+			--arg title "$title" --arg screen "$screen" '
+			# A matcher inherits its rule region, so the text and its lines come
+			# down from the rule rather than being re-derived per nested clause.
+			def match($m; $text; $lines):
+				(($m.contains // []) | all(. as $c | ($text | ascii_downcase | contains($c | ascii_downcase))))
+				and (if ($m.regex // null) then ($text | test($m.regex)) else true end)
+				and (if ($m.line_regex // null) then ($lines | any(test($m.line_regex))) else true end)
+				and (if ($m.any // null) then ($m.any | any(. as $x | match($x; $text; $lines))) else true end)
+				and (if ($m.not // null) then ($m.not | all(. as $x | (match($x; $text; $lines) | not))) else true end);
+			[ ($rules.agents[$agent] // [])[]
+			  | . as $r
+			  | (if $r.region == "title" then $title else $screen end) as $text
+			  | select(match($r; $text; ($text | split("\n"))))
+			]
+			| sort_by(-(.priority // 0))
+			| first
+			| if . == null then ""
+			  elif (.skip // false) then "skip"
+			  else (.state + "\u001f" + (.id // "?")) end' 2>/dev/null) || verdict=""
+
+		[[ -z $verdict || $verdict == skip ]] && continue
+		new_state=${verdict%%"$US"*}
+		rule_id=${verdict##*"$US"}
+		[[ $new_state == "$state" ]] && continue
+		if ((dry)); then
+			printf '%-6s %-8s %-8s -> %-8s (%s)\n' "$pane" "$agent" "${state:--}" "$new_state" "$rule_id"
+			continue
+		fi
+		cmd_report --pane "$pane" --agent "$agent" --state "$new_state" \
+			--source scan --detail "rule:$rule_id"
+		log "scan: $pane ($agent) ${state:--} -> $new_state via $rule_id"
+	done <<<"$candidates"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # refresh / gc: reconcile what the hooks could not tell us
 # ---------------------------------------------------------------------------
 cmd_refresh() {
@@ -388,13 +539,15 @@ cmd_refresh() {
 		# forgotten; start it again and SessionStart re-registers it.)
 		if [[ ( -n $state || -n $agent ) && $cmd =~ ^-?(zsh|bash|sh|fish|dash|ksh|login)$ ]]; then
 			local opt
-			for opt in @corral_state @corral_detail @corral_seen_at @corral_agent @corral_session; do
+			for opt in @corral_state @corral_detail @corral_seen_at @corral_source @corral_agent @corral_session; do
 				tmux set -p -u -t "$pane" "$opt" 2>/dev/null || true
 			done
 			rm -f "$(record_path "$pane")"
 			refresh_window_state "$pane"
 		fi
 	done < <(tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{@corral_state}\t#{@corral_agent}' 2>/dev/null)
+	# Agents that cannot report for themselves get read off the pane here.
+	cmd_scan
 	cmd_gc
 }
 
@@ -626,6 +779,46 @@ cmd_doctor() {
 		fi
 	done
 
+	if [[ -r $CORRAL_RULES ]]; then
+		printf '  %s scan rules: %s agents in %s\n' "$ok" \
+			"$(jq -r '.agents | keys | join(", ")' "$CORRAL_RULES" 2>/dev/null)" "$CORRAL_RULES"
+	else
+		printf '  %s no scan rules at %s — agents without hooks stay unknown\n' "$warn" "$CORRAL_RULES"
+	fi
+
+	# The failure this catches has bitten this machine before: a long-lived
+	# process started from inside a Claude session captures
+	# CLAUDE_CODE_CHILD_SESSION=1, whatever it spawns inherits it, and from then
+	# on those agents both stop saving transcripts and — for corral — classify
+	# every hook as a child and report nothing. Same root cause as the herdr
+	# transcript-saving incident.
+	#
+	# Measured on the pane shells, not on the server process. The tmux server
+	# here does carry the marker in its own environment and in
+	# `show-environment -g`, and it still does not reach a newly spawned pane;
+	# checking the server would cry wolf on every machine where tmux was ever
+	# started from inside an agent.
+	# Measured on the agent process, not on the pane shell and not on the tmux
+	# server. The server here carries the marker in its own environment and in
+	# `show-environment -g` without it ever reaching a freshly spawned pane, and
+	# the pane shells are clean; what actually carries it is a claude started
+	# from inside another claude session, which is the process whose hooks then
+	# go quiet.
+	local poisoned=0 pp kid
+	for pp in $(tmux list-panes -a -F '#{pane_pid}' 2>/dev/null); do
+		kid=$(pgrep -P "$pp" 2>/dev/null | head -1) || kid=""
+		[[ -n $kid ]] || continue
+		ps -Ewwwp "$kid" 2>/dev/null | tr ' ' '\n' \
+			| grep -q '^CLAUDE_CODE_CHILD_SESSION=1' && poisoned=$((poisoned + 1))
+	done
+	if [[ ${poisoned:-0} -gt 0 ]]; then
+		printf '  %s %s agent(s) run with CLAUDE_CODE_CHILD_SESSION=1 inherited:\n' "$warn" "$poisoned"
+		printf '    corral reads them as nested sessions, so their hooks report nothing\n'
+		printf '    and they have no restore identity — `corral scan` still tracks their\n'
+		printf '    state off the screen. Claude also disables transcript saving there.\n'
+		printf '    Fix by starting claude from a shell without the marker.\n'
+	fi
+
 	printf '\n  records: %s in %s\n' "$(ls -1 "$PANES_DIR"/*.json 2>/dev/null | wc -l | tr -d ' ')" "$PANES_DIR"
 	if [[ -L $SNAP_DIR/last ]]; then
 		printf '  snapshot: %s\n            %s agent pane(s), saved %s\n' \
@@ -702,6 +895,8 @@ corral — what is running in every tmux pane, and how to get the agents back.
   corral report --pane %7 --agent X --state working [--detail ...]
                                     ingest point for any state writer
   corral seen [pane]                clear a pane's "done, unseen" badge
+  corral scan [--pane %7] [--dry-run]
+                                    read title/screen for agents without hooks
   corral refresh                    reconcile panes whose agent died silently
   corral gc                         drop records for panes/servers that are gone
   corral save                       snapshot agent identity by pane coordinates
@@ -722,6 +917,7 @@ main() {
 		list) cmd_list "$@" ;;
 		status) cmd_status "$@" ;;
 		seen) cmd_seen "$@" ;;
+		scan) cmd_scan "$@" ;;
 		refresh) cmd_refresh "$@" ;;
 		gc) cmd_gc "$@" ;;
 		save) cmd_save "$@" ;;

@@ -1,0 +1,272 @@
+{
+  "schema": 1,
+  "_comment": [
+    "Screen and title rules for agents corral cannot hear from directly.",
+    "Hooks always win: `corral scan` only evaluates a pane whose state came",
+    "from somewhere else, or whose hook has gone quiet past CORRAL_STALE_SECS.",
+    "",
+    "Ported from herdr's detection rules (~/.local/state/herdr/agent-detection/",
+    "remote/*.toml), which are versioned and updated by herdr — check there",
+    "first when an agent changes its UI and detection starts lying. This is a",
+    "snapshot, not a live read: herdr ships TOML with regions corral does not",
+    "implement, and coupling to another tool's managed state would break both.",
+    "",
+    "region  'title'  = the OSC title, which tmux hands us as #{pane_title}",
+    "        'screen' = the last CORRAL_SCAN_LINES non-empty lines on screen",
+    "matchers: contains (all, case-insensitive substrings), regex (on the whole",
+    "        region; jq uses Oniguruma, so codepoints are \\x{2733}, not \\u2733),",
+    "        region), line_regex (any single line), any [...], not [...]",
+    "state 'unknown' with skip:true means: this pane is showing something that",
+    "        proves nothing (a transcript viewer, a menu) — leave state alone.",
+    "Highest priority match wins."
+  ],
+  "agents": {
+    "claude": [
+      {
+        "id": "title_working",
+        "state": "working",
+        "priority": 1100,
+        "region": "title",
+        "regex": "^[\\x{2800}-\\x{28FF}\\x{25D0}-\\x{25D3}] ",
+        "_why": "braille spinner up to 2.1.227, half-circles from 2.1.228"
+      },
+      {
+        "id": "transcript_viewer",
+        "state": "unknown",
+        "priority": 1000,
+        "skip": true,
+        "region": "screen",
+        "contains": [
+          "showing detailed transcript"
+        ]
+      },
+      {
+        "id": "turn_running",
+        "state": "working",
+        "priority": 970,
+        "region": "screen",
+        "line_regex": "^\\s*[⏸⏵].*esc to interrupt(\\s|·|$)"
+      },
+      {
+        "id": "prompt_box_idle",
+        "state": "idle",
+        "priority": 950,
+        "region": "screen",
+        "line_regex": "^\\s*❯",
+        "not": [
+          {
+            "contains": [
+              "enter to select"
+            ]
+          },
+          {
+            "contains": [
+              "esc to cancel"
+            ]
+          },
+          {
+            "contains": [
+              "tab/arrow keys"
+            ]
+          },
+          {
+            "contains": [
+              "arrow keys to navigate"
+            ]
+          },
+          {
+            "contains": [
+              "do you want to proceed?"
+            ]
+          }
+        ],
+        "_why": "empty prompt box means the turn is over and nothing is blocking"
+      },
+      {
+        "id": "permission_prompt",
+        "state": "blocked",
+        "priority": 850,
+        "region": "screen",
+        "contains": [
+          "do you want to proceed?"
+        ],
+        "any": [
+          {
+            "line_regex": "(?i)^\\s*❯?\\s*1\\.\\s*yes\\b"
+          },
+          {
+            "line_regex": "(?i)^\\s*2\\.\\s*no\\b"
+          },
+          {
+            "contains": [
+              "tab to amend"
+            ]
+          },
+          {
+            "contains": [
+              "ctrl+e to explain"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "waiting_for_permission",
+        "state": "blocked",
+        "priority": 300,
+        "region": "screen",
+        "contains": [
+          "waiting for permission"
+        ]
+      },
+      {
+        "id": "title_idle",
+        "state": "idle",
+        "priority": 250,
+        "region": "title",
+        "regex": "^\\x{2733} ",
+        "_why": "✳ is the marker claude leaves on the title when not in a turn"
+      }
+    ],
+    "codex": [
+      {
+        "id": "title_blocked",
+        "state": "blocked",
+        "priority": 1100,
+        "region": "title",
+        "contains": [
+          "Action Required"
+        ]
+      },
+      {
+        "id": "title_working",
+        "state": "working",
+        "priority": 1050,
+        "region": "title",
+        "regex": "(^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]( |$)"
+      },
+      {
+        "id": "transcript_viewer",
+        "state": "unknown",
+        "priority": 1000,
+        "skip": true,
+        "region": "screen",
+        "contains": [
+          "q to quit"
+        ],
+        "any": [
+          {
+            "contains": [
+              "↑/↓ to scroll"
+            ]
+          },
+          {
+            "contains": [
+              "pgup/pgdn to"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "trust_directory",
+        "state": "blocked",
+        "priority": 950,
+        "region": "screen",
+        "regex": "(?s)Do\\s+you\\s+trust\\s+the\\s+contents\\s+of\\s+this\\s+directory\\?"
+      },
+      {
+        "id": "strong_blocker",
+        "state": "blocked",
+        "priority": 900,
+        "region": "screen",
+        "any": [
+          {
+            "contains": [
+              "press enter to confirm or esc to cancel"
+            ]
+          },
+          {
+            "contains": [
+              "enter to submit answer"
+            ]
+          },
+          {
+            "contains": [
+              "enter to submit all"
+            ]
+          },
+          {
+            "contains": [
+              "allow command?"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "weak_blocker",
+        "state": "blocked",
+        "priority": 600,
+        "region": "screen",
+        "any": [
+          {
+            "contains": [
+              "[y/n]"
+            ]
+          },
+          {
+            "contains": [
+              "yes (y)"
+            ]
+          },
+          {
+            "contains": [
+              "do you want to"
+            ],
+            "any": [
+              {
+                "contains": [
+                  "yes"
+                ]
+              },
+              {
+                "contains": [
+                  "❯"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "working_footer",
+        "state": "working",
+        "priority": 500,
+        "region": "screen",
+        "line_regex": "^[•◦]\\s+Working \\([^)]*esc to interrupt\\)",
+        "not": [
+          {
+            "contains": [
+              "■ Conversation interrupted"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "title_idle",
+        "state": "idle",
+        "priority": 100,
+        "region": "title",
+        "regex": "\\S",
+        "not": [
+          {
+            "regex": "(^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]( |$)"
+          },
+          {
+            "contains": [
+              "Action Required"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

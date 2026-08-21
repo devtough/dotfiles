@@ -59,6 +59,20 @@ trap cleanup EXIT HUP INT TERM
 
 command -v tmux >/dev/null 2>&1 || exit 0
 
+# Only the session a human is looking at gets to speak for the pane. A Claude
+# Code background job or nested session runs inside the pane's agent, not in the
+# pane, and its tool calls would otherwise report the pane as working while the
+# interactive session sits idle at its prompt — and worse, its SessionStart
+# would stamp the pane's restore record with the child's session id, so a reboot
+# would resume the background job instead of the conversation on screen.
+# (herdr's codex integration guards the same case via CODEX_THREAD_ID; the
+# subagent half of it is handled in `corral report`, which can see agent_id.)
+#
+# Failure direction is deliberate: if this marker is ever inherited by a real
+# interactive session — it has happened, see the herdr server env note — the
+# pane goes untracked rather than mistracked, and `corral doctor` says so.
+[ "${CLAUDE_CODE_CHILD_SESSION:-}" = "1" ] && exit 0
+
 # --- which pane are we in? --------------------------------------------------
 # $TMUX_PANE is the cheap answer, but an agent does not necessarily export it
 # into the processes it spawns for hooks, so fall back to walking up the

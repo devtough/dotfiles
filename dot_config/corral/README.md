@@ -10,9 +10,10 @@ tmux.conf carries a ready-to-uncomment line for each.
 
 ## The pieces
 
-    ~/.local/bin/corral          the CLI: inventory, snapshot, restore, doctor
+    ~/.local/bin/corral          the CLI: inventory, scan, snapshot, restore
     ~/.local/bin/corral-hook     the fast path agents call on every event
     ~/.config/corral/config.sh   knobs (env > this file > built-in defaults)
+    ~/.config/corral/rules.json  title/screen rules for agents without hooks
     ~/.local/state/corral/       records, snapshots, log
 
 Wiring lives in three places, all installed already:
@@ -53,6 +54,15 @@ resurrect's dump describe the same instant. `last` symlinks to the newest.
     ○ idle      session alive, nothing in flight
     ·           no agent, or state unknown
 
+A `~` after the state means corral inferred it from the pane rather than
+hearing it from the agent (see below); a `!` means the state is stale.
+
+Not every Notification is a blocker. Claude Code fires the same event for "I
+need permission to run X" and for "I have been waiting for your input", and
+mapping both to blocked pins a finished pane at blocked forever, because
+nothing else fires until you type. corral classifies on the message text and
+lets the second kind pass through without touching the state.
+
 Ranking is `blocked > done > working > idle`, which is the order `corral list`
 sorts in: the loudest thing is always the top row.
 
@@ -80,6 +90,15 @@ than failing), that its cwd is the one that was saved, that the transcript file
 still exists, and that a shell has actually reached a prompt there. Anything
 that fails is skipped with a reason in `~/.local/state/corral/corral.log`.
 
+Identity comes from hooks and from nothing else. Reading the session id out of
+the agent's own process environment looks tempting and is wrong: a process shows
+what it *inherited*, so every claude on this machine reports the id of whichever
+session started the tmux server. Inferring it from the ambient environment is
+worse — an ungated fallback let one `corral scan` stamp all five panes with the
+scanning session's id, which would have resumed the same conversation five times
+after a reboot. A pane with no hook-reported identity is simply not resumable
+until its next SessionStart, and `corral restore` says so rather than guessing.
+
 The one thing that cannot be observed is the flags the agent was started with —
 the process title is rewritten, so they are gone by save time. They are declared
 once in `config.sh` as `CORRAL_CLAUDE_FLAGS`.
@@ -89,6 +108,49 @@ presses Enter, `stage` leaves it on the prompt for you, `off` only logs. Dry-run
 any snapshot without touching a pane:
 
     corral restore --dry-run
+
+## Agents that cannot report for themselves
+
+codex exposes only SessionStart, so it can say who it is but never what it is
+doing, and most other agents say nothing at all. `corral scan` closes that gap
+by reading the pane, using rules in `rules.json` ported from herdr's detection
+set (`~/.local/state/herdr/agent-detection/remote/*.toml` — herdr versions and
+updates those, so check there first when an agent changes its UI).
+
+The cheap half of the trick is the OSC title: tmux hands it over as
+`#{pane_title}`, so a codex pane costs no `capture-pane` at all. codex puts a
+braille spinner in the title while working and "Action Required" in it when it
+wants you; claude marks an idle title with `✳` and swaps in a spinner glyph
+while a turn runs. Screen rules cover what a title cannot say — approval
+prompts, trust dialogs, an empty prompt box.
+
+Hooks always win. `corral scan` skips any pane whose state came from its own
+agent unless that agent has gone quiet past `CORRAL_STALE_SECS`, so a scan can
+correct a killed agent but never contradict a live one. Every state carries its
+provenance in `@corral_source` and in the JSON as `state_source`.
+
+    corral scan --dry-run          # what it would change, and which rule fired
+    corral scan --pane %7          # one pane
+
+`corral refresh` runs a scan as part of reconciling, and the `pane-exited` hook
+runs `corral refresh`.
+
+## One pane, one voice
+
+A Claude Code subagent, a background job, or a nested session runs *inside* the
+pane's agent rather than in the pane. Left alone, their events report the pane
+as working while the interactive session sits idle, and their SessionStart
+stamps the pane's restore record with the wrong session id — a reboot would then
+resume a background job instead of the conversation on screen. corral drops
+reports carrying `agent_id` (subagent) or `CLAUDE_CODE_CHILD_SESSION=1`, and
+codex reports whose session id disagrees with `CODEX_THREAD_ID`, which is the
+same guard herdr's codex integration uses.
+
+That marker is only trusted on hook-originated reports. On a hand-run `corral
+report` or a scan the environment belongs to whatever shell invoked corral, and
+an inherited marker would silently drop every report — the same shape as the
+herdr server env incident. `corral doctor` counts pane shells carrying the
+marker, because an agent started in one of those saves no transcript either.
 
 ## Adding a writer
 
