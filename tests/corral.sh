@@ -582,6 +582,31 @@ test_restore_survives_a_real_server_restart() {
 	assert_contains "$out" "claude --resume sid-restore" "the conversation is put back"
 }
 
+test_restore_skips_a_pane_whose_session_was_renamed() {
+	# A snapshot is keyed on session:window.pane, and the session NAME is half
+	# of that. `prefix S` (tmux-name) renames sessions, so every coordinate in
+	# the last snapshot goes stale the moment it is used, until the next save
+	# rewrites them. Observed for real: a session renamed 1 -> connectors made
+	# `corral restore --dry-run` print nothing at all.
+	#
+	# The pane index is unaffected by `prefix ,` / `prefix N` — a window rename
+	# does not move a window — so only session renames do this.
+	local pane out
+	pane=$(seed_agent_with_identity)
+	corral save >/dev/null
+	assert_contains "$(corral restore --dry-run)" "claude --resume" "resumable before the rename"
+
+	tm rename-session -t t renamed
+	out=$(corral restore --dry-run)
+	assert_empty "$out" "the old coordinates no longer resolve"
+	assert_contains "$(cat "$STATE/corral.log")" "was not restored" "and it says why rather than guessing"
+
+	# A fresh save re-keys it, which is why resurrect's post-save-all runs
+	# `corral save`: both files have to describe the same instant.
+	corral save >/dev/null
+	assert_contains "$(corral restore --dry-run)" "claude --resume" "a save after the rename fixes it"
+}
+
 test_restore_will_not_fall_back_to_the_active_pane() {
 	# tmux resolves a target with a stale window index to the session's active
 	# pane rather than failing, which would replay somebody else's conversation
@@ -768,6 +793,7 @@ TESTS=(
 	restore_dry_run_builds_the_resume_command
 	restore_types_the_command_into_the_pane
 	restore_survives_a_real_server_restart
+	restore_skips_a_pane_whose_session_was_renamed
 	restore_will_not_fall_back_to_the_active_pane
 	restore_skips_a_pane_whose_cwd_moved
 	restore_skips_a_claude_whose_transcript_is_gone
