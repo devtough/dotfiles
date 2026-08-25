@@ -548,6 +548,40 @@ test_restore_types_the_command_into_the_pane() {
 	assert_contains "$(cat "$STATE/corral.log")" "already handled" "a second run skips it"
 }
 
+test_restore_survives_a_real_server_restart() {
+	# The whole point of corral, rehearsed end to end: identity is captured
+	# while the agent runs, the server dies, resurrect rebuilds the pane tree
+	# at the same coordinates, and the conversation goes back into the right
+	# pane. Everything volatile is gone across that boundary — pane options die
+	# with the server, and gc drops the per-pane records because their
+	# server_pid no longer matches — so the coordinate-keyed snapshot is the
+	# only thing carrying the session id over.
+	local pane out
+	pane=$(seed_agent_with_identity)
+	assert_eq t:1.0 "$(pq "$pane" .target)" "seeded at a known coordinate"
+	corral save >/dev/null
+
+	tm kill-server >/dev/null 2>&1
+	# Stand the server back up the way resurrect does: same session name, same
+	# window and pane indices, same cwd, a bare shell in every pane.
+	tmux -S "$SOCKET" -f /dev/null new-session -d -s t -x 120 -y 40 /bin/sh
+	tmux -S "$SOCKET" set-option -g default-command /bin/sh 2>/dev/null
+	tm new-window -c "$PWD" /bin/sh
+	local sockpath serverpid
+	sockpath=$(tm display-message -p "#{socket_path}")
+	serverpid=$(tm display-message -p "#{pid}")
+	export TMUX="$sockpath,$serverpid,0"
+
+	# Nothing volatile survived, and the records are correctly disowned.
+	assert_eq null "$(pq %1 .agent)" "the rebuilt pane knows nothing"
+	corral gc
+	assert_empty "$(ls -1 "$PANES" 2>/dev/null)" "records from the dead server are dropped"
+
+	CORRAL_RESTORE=stage corral restore
+	out=$(tm capture-pane -p -t t:1.0)
+	assert_contains "$out" "claude --resume sid-restore" "the conversation is put back"
+}
+
 test_restore_will_not_fall_back_to_the_active_pane() {
 	# tmux resolves a target with a stale window index to the session's active
 	# pane rather than failing, which would replay somebody else's conversation
@@ -700,6 +734,7 @@ TESTS=(
 	save_snapshots_the_resumable_panes
 	restore_dry_run_builds_the_resume_command
 	restore_types_the_command_into_the_pane
+	restore_survives_a_real_server_restart
 	restore_will_not_fall_back_to_the_active_pane
 	restore_skips_a_pane_whose_cwd_moved
 	restore_skips_a_claude_whose_transcript_is_gone
