@@ -180,10 +180,22 @@ file up first, so both integrations run side by side.
 ## Cost
 
 The hot path (`PreToolUse`/`PostToolUse`/`UserPromptSubmit`) is `/bin/sh` and
-makes one tmux round trip: it reads state and liveness together, and writes only
-on a real state change or once a minute to re-stamp liveness. Order 10ms, no
-disk, no jq. `SessionStart`, `Notification` and `SessionEnd` are rare and are the
-only events that parse the payload or touch a file.
+makes one tmux round trip: it reads state, liveness and the pane's session id
+together, and writes only on a real state change or once a minute to re-stamp
+liveness. Order 10ms, no disk, no jq. `SessionStart`, `Notification` and
+`SessionEnd` are rare and parse the payload every time.
+
+The one exception on the hot path is identity, and it is worth the exception.
+Every Claude Code event carries `session_id`, `transcript_path` and `cwd` — not
+just `SessionStart` — so when that third field comes back empty the hook hands
+the payload to `corral report` and the pane registers itself. It costs one fork
+that the old `cat >/dev/null` was paying anyway, it happens at most once per
+session per pane, and without it a pane could only ever acquire an identity in
+the instant its agent started. An agent already running when the hooks were
+installed, or while they were broken, stayed unresumable for the rest of its
+life however much work it did. Now any event at all is enough. (`codex` still
+is not: it exposes only `SessionStart`, so a codex pane that missed it has to
+be restarted.)
 
 ## Tests
 

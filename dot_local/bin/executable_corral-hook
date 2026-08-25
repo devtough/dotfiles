@@ -38,24 +38,33 @@ event=${2:-}
 STATE_DIR=${CORRAL_STATE_DIR:-$HOME/.local/state/corral}
 PIDMAP_DIR=$STATE_DIR/pidpane
 
-# Drain the payload. Closing stdin unread would hand the agent an EPIPE on a
-# path where it is doing nothing wrong.
+# Drain the payload, always, and keep it. Closing stdin unread would hand the
+# agent an EPIPE on a path where it is doing nothing wrong.
+#
+# Every Claude Code hook event carries session_id, transcript_path and cwd --
+# the hot ones included, not just SessionStart. This used to throw the hot ones
+# away for speed, which meant a pane could only ever acquire an identity at the
+# moment its agent started: an agent already running when the hooks were
+# installed, or when they were broken, stayed unresumable for its whole life no
+# matter how much work it did. Holding the payload in a variable costs the same
+# one fork as piping it to /dev/null did, and buys a pane the ability to
+# register itself off any event at all.
+payload_data=$(cat 2>/dev/null) || payload_data=""
+
 payload=""
-case "$event" in
-	SessionStart | Notification | SessionEnd)
-		payload=$(mktemp "${TMPDIR:-/tmp}/corral-hook.XXXXXX" 2>/dev/null) || payload=""
-		if [ -n "$payload" ]; then
-			cat >"$payload" 2>/dev/null || true
-		else
-			cat >/dev/null 2>&1 || true
-		fi
-		;;
-	*)
-		cat >/dev/null 2>&1 || true
-		;;
-esac
 cleanup() { [ -n "$payload" ] && rm -f "$payload"; return 0; }
 trap cleanup EXIT HUP INT TERM
+
+# `corral report` takes the payload as a file. Write one only when we are
+# actually going to call it, so the common path never touches the disk.
+payload_file() {
+	[ -n "$payload_data" ] || return 1
+	if [ -z "$payload" ]; then
+		payload=$(mktemp "${TMPDIR:-/tmp}/corral-hook.XXXXXX" 2>/dev/null) || return 1
+		printf '%s' "$payload_data" >"$payload" 2>/dev/null || return 1
+	fi
+	printf '%s\n' "$payload"
+}
 
 command -v tmux >/dev/null 2>&1 || exit 0
 
@@ -149,7 +158,7 @@ esac
 case "$event" in
 	SessionStart | Notification | SessionEnd)
 		corral report --pane "$pane" --agent "$agent" --state "$state" \
-			--event "$event" --payload "$payload" >/dev/null 2>&1 || true
+			--event "$event" --payload "$(payload_file)" >/dev/null 2>&1 || true
 		exit 0
 		;;
 esac
@@ -164,8 +173,24 @@ esac
 # from an agent that was killed mid-tool-call, and readers would flag every real
 # 40-minute turn as stale. It is refreshed at most once a minute so a chatty turn
 # still costs one tmux round trip per event, not two.
-prev=$(tmux display-message -p -t "$pane" '#{@corral_state}|#{@corral_seen_at}' 2>/dev/null) || exit 0
+prev=$(tmux display-message -p -t "$pane" '#{@corral_state}|#{@corral_seen_at}|#{@corral_session}' 2>/dev/null) || exit 0
 now=$(date +%s)
+
+# Same round trip, third field: has this pane got an identity yet? If not, the
+# event in hand is carrying one, and a pane with no session id is a pane that
+# cannot be resumed after a reboot. Register it through `corral report` so the
+# record format stays in one place. Taken at most once per session per pane --
+# report sets @corral_session, and every event after this reads it here and
+# falls straight through to the fast path below.
+sid=${prev##*|}
+prev=${prev%|*}
+if [ -z "$sid" ] && [ -n "$payload_data" ]; then
+	pf=$(payload_file) && {
+		corral report --pane "$pane" --agent "$agent" --state "$state" \
+			--event "$event" --payload "$pf" >/dev/null 2>&1 || true
+		exit 0
+	}
+fi
 
 if [ "${prev%%|*}" = "$state" ]; then
 	seen=${prev##*|}

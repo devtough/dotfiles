@@ -651,6 +651,39 @@ in_pane() { # pane command...
 	sleep 0.6
 }
 
+test_hook_registers_identity_from_a_hot_event() {
+	# An agent that was already running when the hooks were installed -- or
+	# when they were broken -- never sees another SessionStart, and used to
+	# stay unresumable for the rest of its life. Every event carries the same
+	# session id, so the first one to arrive is enough.
+	: >"$WORLD/t.jsonl"
+	printf '{"session_id":"sid-hot","transcript_path":"%s","cwd":"%s"}\n' \
+		"$WORLD/t.jsonl" "$PWD" >"$WORLD/p.json"
+	in_pane %0 "sh -c 'corral-hook claude PreToolUse < $WORLD/p.json; true'"
+	assert_eq sid-hot "$(tm display-message -p -t %0 '#{@corral_session}')" "the pane learned its session"
+	assert_eq working "$(tm display-message -p -t %0 '#{@corral_state}')" "and the state still lands"
+	assert_eq hook "$(tm display-message -p -t %0 '#{@corral_source}')" "attributed to the hook"
+	assert_eq sid-hot "$(jq -r .session_id "$PANES"/*.json)" "and a durable record exists"
+	# The point of all of it: that pane can now be resumed after a reboot.
+	corral save >/dev/null
+	assert_contains "$(corral restore --dry-run)" "claude --resume sid-hot" "and restore can put it back"
+}
+
+test_hook_registers_identity_only_once() {
+	: >"$WORLD/t.jsonl"
+	printf '{"session_id":"sid-hot","transcript_path":"%s","cwd":"%s"}\n' \
+		"$WORLD/t.jsonl" "$PWD" >"$WORLD/p.json"
+	in_pane %0 "sh -c 'corral-hook claude PreToolUse < $WORLD/p.json; true'"
+	assert_eq sid-hot "$(tm display-message -p -t %0 '#{@corral_session}')" "registered"
+	# Once the pane has an identity the branch is never taken again: a later
+	# hot event goes straight down the fast path and does not rewrite the
+	# record, so the hot path stays one tmux round trip.
+	printf '{"session_id":"sid-other"}\n' >"$WORLD/p2.json"
+	in_pane %0 "sh -c 'corral-hook claude PostToolUse < $WORLD/p2.json; true'"
+	assert_eq sid-hot "$(tm display-message -p -t %0 '#{@corral_session}')" "a later event does not re-register"
+	assert_eq sid-hot "$(jq -r .session_id "$PANES"/*.json)" "and does not rewrite the record"
+}
+
 test_hook_maps_events_to_states() {
 	local pane
 	pane=$(fake_agent 2.1.238)
@@ -741,6 +774,8 @@ TESTS=(
 	restore_skips_an_agent_with_no_resume_recipe
 	restore_off_does_nothing
 	hook_maps_events_to_states
+	hook_registers_identity_from_a_hot_event
+	hook_registers_identity_only_once
 	hook_ignores_events_it_does_not_map
 	hook_accepts_a_direct_child_of_the_pane_process
 	hook_refuses_to_speak_for_a_pane_it_does_not_own
