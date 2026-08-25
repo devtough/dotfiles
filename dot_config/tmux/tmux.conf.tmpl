@@ -121,6 +121,10 @@ bind c new-window -c "#{pane_current_path}"
 # on open, and clears it when the popup's command exits (covers fzf-cancel,
 # detach, and exit). If popups ever stop opening after a hard kill, reset with:
 #     tmux set -g @popup_open 0
+#
+# Both pickers preview through scripts/peek-preview.sh, which trims the blank
+# rows capture-pane pads to the bottom of a pane and shows the last screenful
+# of real output, so the preview opens at the END of the buffer, not the top.
 # -----------------------------------------------------------------------------
 
 # Fuzzy-JUMP to any window across ALL sessions, then switch to it (prefix + j).
@@ -130,7 +134,7 @@ bind j if-shell -F '#{@popup_open}' {
     display-message 'a popup is already open'
 } {
     set -g @popup_open 1
-    display-popup -E -w 70% -h 70% "tmux list-windows -a -F '#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]' | fzf --reverse --no-sort --preview 'tmux capture-pane -ep -t {1}' --preview-window=down:60% | awk '{print \$1}' | xargs -r tmux switch-client -t ; tmux set -g @popup_open 0"
+    display-popup -E -w 70% -h 70% "tmux list-windows -a -F '#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]' | fzf --reverse --no-sort --preview '~/.config/tmux/scripts/peek-preview.sh {1}' --preview-window=down:60% | awk '{print \$1}' | xargs -r tmux switch-client -t ; tmux set -g @popup_open 0"
 }
 
 # Dedicated 'claude' scratch session in a popup, TOGGLE (prefix + C-p).
@@ -151,13 +155,15 @@ bind C-p if-shell -F '#{==:#{session_name},claude}' {
 
 # Fuzzy-PEEK any window in a popup, then detach to close (prefix + P).
 # Same picker as 'prefix j', but attaches a throwaway client in the popup
-# instead of switching. Detach (C-a d) and your underlying window is unchanged
-# — as long as the target lives in a session you're not currently viewing.
+# instead of switching. Detach (C-a d) and your underlying window is unchanged:
+# the session's current window is saved before select-window and restored after
+# the popup client exits, and the peek client attaches with -f ignore-size so it
+# does not drag the session down to the popup's 85% size while it is open.
 bind P if-shell -F '#{@popup_open}' {
     display-message 'a popup is already open'
 } {
     set -g @popup_open 1
-    display-popup -w 85% -h 85% -E 'target=$(tmux list-windows -a -F "#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]" | fzf --reverse --no-sort --preview "tmux capture-pane -ep -t {1}" --preview-window=down:60% | awk "{print \$1}"); [ -n "$target" ] && tmux select-window -t "$target" && TMUX= tmux attach -t "${target%%:*}" ; tmux set -g @popup_open 0'
+    display-popup -w 85% -h 85% -E 'target=$(tmux list-windows -a -F "#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]" | fzf --reverse --no-sort --preview "~/.config/tmux/scripts/peek-preview.sh {1}" --preview-window=down:60% | awk "{print \$1}"); if [ -n "$target" ]; then sess="${target%%:*}"; orig=$(tmux display-message -p -t "$sess" "#{window_index}"); tmux select-window -t "$target"; TMUX= tmux attach -f ignore-size -t "$sess"; tmux select-window -t "$sess:$orig"; fi; tmux set -g @popup_open 0'
 }
 
 # Fuzzy-switch by AGENT STATE across all sessions (prefix + a).
