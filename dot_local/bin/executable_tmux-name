@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# tmux-name — ask a model for a window or session name that describes the work.
+#
+# automatic-rename-format (see ~/.config/tmux/tmux.conf) can only reflect what a
+# pane already advertises: Claude sets its pane title to the task, codex and
+# plain shells do not, so those windows fall back to a command name. This fills
+# that gap by reading what is actually on screen and naming it.
+#
+#   tmux-name window [target]    rename the window (default: current)
+#   tmux-name session [target]   rename the session, from its window names
+#
+# A manual rename turns automatic-rename off for that window, so a generated
+# name sticks until you set it back with `tmux setw automatic-rename on`.
+#
+# Note: this sends the visible pane text to the model. Same trust boundary as
+# the agent already running in the pane, but do not point it at a pane holding
+# secrets you would not paste into a prompt.
+set -euo pipefail
+
+MODEL="${TMUX_NAME_MODEL:-claude-haiku-4-5-20251001}"
+LINES="${TMUX_NAME_LINES:-40}"
+
+die() { tmux display-message "tmux-name: $*"; exit 1; }
+command -v claude >/dev/null || die "claude not on PATH"
+
+# Strip to a single clean line: no quotes, no markdown, no trailing period.
+clean() {
+	tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+		-e 's/^["'"'"'`*_#-]*//' -e 's/["'"'"'`*_.]*$//' | head -1 | cut -c1-"$1"
+}
+
+ask() {
+	local prompt=$1 max=$2 out
+	out=$(printf '%s' "$prompt" | claude -p --model "$MODEL" 2>/dev/null | clean "$max") || true
+	[ -n "$out" ] || die "model returned nothing"
+	printf '%s' "$out"
+}
+
+window_context() {
+	local target=$1
+	tmux list-panes -t "$target" -F '#{pane_index}#{?pane_active, (active),}' >/dev/null || die "no such window"
+	printf 'Working directory: %s\n' "$(tmux display-message -p -t "$target" '#{pane_current_path}')"
+	local repo
+	repo=$(git -C "$(tmux display-message -p -t "$target" '#{pane_current_path}')" \
+		rev-parse --show-toplevel 2>/dev/null || true)
+	[ -n "$repo" ] && printf 'Git repo: %s\n' "$(basename "$repo")"
+	local p
+	while read -r p; do
+		printf '\n--- pane %s (%s, agent=%s) title=%s ---\n' \
+			"$p" \
+			"$(tmux display-message -p -t "$target.$p" '#{pane_current_command}')" \
+			"$(tmux display-message -p -t "$target.$p" '#{@corral_agent}')" \
+			"$(tmux display-message -p -t "$target.$p" '#{pane_title}')"
+		tmux capture-pane -p -t "$target.$p" | grep -v '^[[:space:]]*$' | tail -n "$LINES"
+	done < <(tmux list-panes -t "$target" -F '#{pane_index}')
+}
+
+case "${1:-window}" in
+window)
+	target="${2:-$(tmux display-message -p '#{session_name}:#{window_index}')}"
+	name=$(ask "Below is the live content of a tmux window's panes. Name the window for
+what is being worked on there — the task or subject, not the tool.
+
+Reply with ONLY the name. 2-4 words, Title Case, 24 characters max. No quotes,
+no punctuation, no explanation. Prefer the specific noun over the generic one:
+\"Qualtrics Connector\", not \"Data Work\".
+Directories under ~/Work/tries carry a YYYY-MM-DD- prefix; the date is not part
+of the name.
+
+$(window_context "$target")" 24)
+	tmux rename-window -t "$target" "$name"
+	tmux display-message "renamed $target -> $name"
+	;;
+session)
+	target="${2:-$(tmux display-message -p '#{session_name}')}"
+	windows=$(tmux list-windows -t "$target" \
+		-F '#{window_index}: #{window_name} [#{pane_current_command}] #{pane_current_path}') \
+		|| die "no such session"
+	name=$(ask "These are the windows of one tmux session. Name the session for the theme
+that connects them — the project or area of work.
+
+Reply with ONLY the name. 1-2 words, lowercase, 16 characters max, no spaces
+(use a hyphen). No quotes, no explanation.
+Directories under ~/Work/tries carry a YYYY-MM-DD- prefix; the date is not part
+of the name.
+
+$windows" 16)
+	tmux rename-session -t "$target" "$name"
+	tmux display-message "renamed session $target -> $name"
+	;;
+*)
+	die "usage: tmux-name [window|session] [target]"
+	;;
+esac

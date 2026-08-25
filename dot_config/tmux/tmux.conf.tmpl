@@ -224,6 +224,48 @@ set -g window-status-format "#[fg=#687686] #I:#W "
 set -g window-status-current-format "#[bg=#1d3b53,fg=#82aaff,bold] #I:#W "
 set -g window-status-separator ""
 
+# Window names. The stock automatic-rename-format is #{pane_current_command},
+# which says nothing useful about a pane running an agent: Claude Code rewrites
+# its argv to its version, so every Claude window read "2.1.238". Each agent is
+# handled by what it actually advertises.
+#
+# Claude sets its pane title to the task it is on ("* Databricks connector"), so
+# use that, minus the marker, capped at 24 chars to keep the status bar sane.
+#
+# Codex sets a title too, but it is no use: "<braille spinner> <cwd basename>"
+# while codex renders and a stale shell title while it does not, already
+# ellipsis-truncated by codex, and stripping the spinner with a format regex eats
+# a character (tmux substitutes over bytes, the spinner is 3). So codex panes name
+# themselves off the directory instead. Dirs under ~/Work/tries are date-stamped,
+# which is the least interesting part of the name, so drop the leading YYYY-MM-DD:
+# 2026-08-25-shared-drive-stats reads as "shared-drive-stats". The date classes are
+# spelled out because a {4} repeat would close the #{...} at its first brace --
+# that failure is silent and leaks regex fragments into the window name. Codex
+# carries no task in its title by default; adding task-progress to terminal_title
+# in ~/.codex/config.toml would give it one, worth switching this branch back for.
+#
+# Anything else keeps the command name. Copy mode is a suffix rather than a
+# replacement: tmux's stock format swaps the whole name for "[tmux]" the moment a
+# pane enters copy mode, which blanked the task out of the status bar on scroll.
+#
+# This all follows the ACTIVE pane, so the name changes as you move between panes.
+# `prefix ,` and `prefix N` win over it: a manual rename turns automatic-rename off
+# for that window, and the name then sticks until you set it back on.
+set -g automatic-rename-format "#{?#{==:#{pane_current_command},codex},#{=24:#{s/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-//:#{b:pane_current_path}}},#{?#{m:✳*,#{pane_title}},#{=24:#{s/^✳ //:pane_title}},#{pane_current_command}}}#{?pane_in_mode,[^],}#{?pane_dead,[dead],}"
+
+# `prefix w` (choose-tree) renders PANE rows with #{pane_current_command}, which
+# is the same "2.1.238" junk automatic-rename-format works around. Give it an
+# explicit -F that applies the Claude-title rule to pane rows; window rows keep
+# the stock #{window_name}#{window_flags} and so pick up the names set above.
+bind w choose-tree -Zw -F "#{?pane_format,#{?pane_marked,#[reverse],}#{?#{m:✳*,#{pane_title}},#{s/^✳ //:pane_title},#{pane_current_command}}#{?pane_active,*,}#{?pane_marked,#[default],},#{?window_format,#{window_name}#{window_flags},#{session_name}: #{session_windows} windows}}"
+
+# Generated names (~/.local/bin/tmux-name). automatic-rename can only echo what
+# a pane advertises; these read what is actually on screen and ask a model for a
+# name. prefix N names the window, prefix S the session. Both are manual renames,
+# so they turn automatic-rename off for that window and the name then sticks.
+bind N display-message "naming window..." \; run-shell -b "~/.local/bin/tmux-name window '#{session_name}:#{window_index}'"
+bind S display-message "naming session..." \; run-shell -b "~/.local/bin/tmux-name session '#{session_name}'"
+
 set -g pane-border-style "fg=#687686"
 set -g pane-active-border-style "fg=#82aaff"
 
