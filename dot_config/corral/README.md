@@ -184,3 +184,67 @@ makes one tmux round trip: it reads state and liveness together, and writes only
 on a real state change or once a minute to re-stamp liveness. Order 10ms, no
 disk, no jq. `SessionStart`, `Notification` and `SessionEnd` are rare and are the
 only events that parse the payload or touch a file.
+
+## Tests
+
+`tests/corral.sh` in the dotfiles repo, no dependencies beyond tmux and jq:
+
+    tests/corral.sh              # ~25s, 42 tests
+    tests/corral.sh restore      # only tests whose name matches
+    KEEP=1 tests/corral.sh       # leave each test's temp world behind
+
+Everything corral touches is redirectable, which is what makes an end-to-end
+test cheap. Each test gets a tmux server of its own on a socket inside its own
+temp dir (`tmux -S "$WORLD/tmux.sock" -f /dev/null`), `$TMUX` pointed at it so
+corral and the hooks it spawns find it without a flag, `CORRAL_STATE_DIR` in the
+same temp dir, `CORRAL_CONFIG=/dev/null`, and `$PATH` in front of `~/.local/bin`
+so the *repo* copies run rather than whatever chezmoi last deployed. Your panes,
+records and snapshots are never in scope, and nothing is left in
+`/tmp/tmux-$UID`.
+
+Two things the harness has to get right or the tests quietly prove nothing:
+
+* **A fake agent must be a real process, named the way the agent names itself.**
+  claude execs a per-release binary, so its `pane_current_command` is a version
+  string like `2.1.238`, and that plus a marked pane title is exactly what the
+  detection in `inventory` keys on. `fake_agent` copies `sleep` under that name
+  (ad-hoc re-signing it, or macOS kills the copy on exec). Report state into a
+  pane that is running a bare shell instead and `exited` fires by design, so
+  every read comes back `null`.
+* **The fake agent runs as a child of the pane's shell, never `exec`'d.** A dead
+  agent is supposed to leave a prompt behind — that is corral's only signal that
+  it died, and `refresh`, the restore tests and `exited` all turn on it. `exec`
+  closes the pane instead, which is a different event entirely.
+* **Every pane runs a plain `/bin/sh`, and the environment is built before the
+  server starts.** Redirecting `$PATH` in the runner is not enough: an
+  interactive zsh sources `~/.zshrc`, which re-prepends `~/.local/bin` and puts
+  the *deployed* corral back in front of the repo copy, so pane-side commands
+  quietly test the installed binaries and write to the real
+  `~/.local/state/corral`. `tmux set-environment` does not save you either — it
+  only reaches panes created after the call, and the hook tests drive pane %0.
+  Two hook tests passed against the wrong binary before this was pinned down.
+
+The suite also unsets `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION` and
+`CODEX_THREAD_ID` before each test: it usually runs from inside an agent pane,
+and those are precisely the inherited variables corral is written not to trust.
+Left set, the runner's own session id ends up in a fixture's restore record.
+
+What is worth having tests for is the decisions that were reversed at least
+once: that a `scan` never writes identity, that the `CLAUDE_CODE_SESSION_ID`
+fallback is gated to hook events, that a `Notification` about a permission
+prompt is a blocker but one about waiting is not, that a grandchild process does
+not get to speak for a pane, that `stale` counts silence rather than duration,
+and that `restore` skips a target it cannot resolve exactly instead of letting
+tmux fall back to the active pane.
+
+The first thing the suite caught was a live one. `corral-hook` settled pane
+ownership with `pgrep -P "$pane_pid" | grep -qx "$PPID"`, and on macOS `pgrep`
+omits its own ancestors from the results — `$PPID` is the parent of the shell
+that just ran the pgrep, so it was never in the list and the match could never
+succeed. Only the `$PPID = $pane_pid` branch worked, which no real agent takes:
+a pane runs a shell and the agent is its child. Every agent on this machine was
+being disowned, the refusal cached under its pid for the life of the process,
+and the result looked like corral working — `corral list` was full, because
+`scan` was reading the screen — while no pane had an identity and
+`corral restore --dry-run` printed nothing. The check now asks who `$PPID`'s
+parent is, which is the same question and one `ps` call.

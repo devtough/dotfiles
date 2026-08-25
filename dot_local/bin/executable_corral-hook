@@ -112,11 +112,17 @@ if [ -z "$pane" ]; then
 		if [ "$PPID" = "$pane_pid" ]; then
 			owner=yes
 		else
-			# Any direct child, not just the first: a pane shell can have
-			# more than one, and picking the lowest pid would disown the
-			# agent whenever something else was started beside it. A nested
-			# agent is a grandchild, so it still does not qualify.
-			pgrep -P "$pane_pid" 2>/dev/null | grep -qx "$PPID" && owner=yes
+			# Ask who $PPID's parent is, rather than listing the pane
+			# process's children and looking for $PPID in them. Same
+			# question, but `pgrep -P` cannot answer it: on macOS pgrep
+			# omits its own ancestors from the results, and $PPID is the
+			# parent of the shell that just ran the pgrep, so it was never
+			# in the list. Every real agent takes this branch — the pane
+			# runs a shell and the agent is its child — so the check
+			# disowned all of them and cached the refusal. A nested agent
+			# is a grandchild and still does not qualify.
+			[ "$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')" = "$pane_pid" ] &&
+				owner=yes
 		fi
 	fi
 	mkdir -p "$PIDMAP_DIR" 2>/dev/null || true
