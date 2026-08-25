@@ -201,7 +201,7 @@ be restarted.)
 
 `tests/corral.sh` in the dotfiles repo, no dependencies beyond tmux and jq:
 
-    tests/corral.sh              # ~25s, 42 tests
+    tests/corral.sh              # ~25s, 46 tests
     tests/corral.sh restore      # only tests whose name matches
     KEEP=1 tests/corral.sh       # leave each test's temp world behind
 
