@@ -615,6 +615,10 @@ resume_cmd() {
 	esac
 }
 
+# A pane is available for a resume only once it has settled at a shell prompt.
+# Anything else is somebody's running process, and send-keys would type into it.
+pane_is_free() { [[ $1 =~ ^-?(zsh|bash|sh|fish|dash|ksh|login)$ ]]; }
+
 cmd_restore() {
 	local dry=0 detach=0 snapshot="" force=0
 	while (($#)); do
@@ -696,7 +700,18 @@ cmd_restore() {
 		fi
 		cmdline=$(printf '%s' "$cmdline" | sed 's/[[:space:]]*$//')
 		if ((dry)); then
-			printf '%-12s %-7s %s\n' "$target" "$agent" "$cmdline"
+			# The real run refuses a pane that is not at a shell prompt, so a
+			# dry run that skips this check advertises resumes that would never
+			# happen -- which is how a snapshot whose coordinates have gone
+			# stale still reads as a healthy list. Sample once and say so; a dry
+			# run reports the world as it is and must not sit in the wait loop.
+			cur=$(tmux display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null || echo "")
+			if pane_is_free "$cur"; then
+				printf '%-12s %-7s %s\n' "$target" "$agent" "$cmdline"
+			else
+				printf '%-12s %-7s %s   [busy with %s, would be skipped]\n' \
+					"$target" "$agent" "$cmdline" "${cur:-?}"
+			fi
 			continue
 		fi
 
@@ -706,7 +721,7 @@ cmd_restore() {
 		local tries=0 ok=0
 		while ((tries < CORRAL_RESTORE_TRIES)); do
 			cur=$(tmux display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null || echo "")
-			if [[ $cur =~ ^-?(zsh|bash|sh|fish|dash|ksh|login)$ ]]; then ok=1; break; fi
+			if pane_is_free "$cur"; then ok=1; break; fi
 			sleep 1
 			tries=$((tries + 1))
 		done

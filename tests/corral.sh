@@ -54,6 +54,10 @@ assert_contains() { # haystack needle label
 	fail "$3: [$1] does not contain [$2]"
 }
 
+assert_not_contains() { # haystack needle label
+	case $1 in *"$2"*) fail "$3: [$1] unexpectedly contains [$2]" ;; esac
+}
+
 assert_empty() { # got label
 	[[ -z ${1//[[:space:]]/} ]] || fail "$2: expected nothing, got [$1]"
 }
@@ -526,6 +530,30 @@ test_restore_dry_run_builds_the_resume_command() {
 	assert_contains "$out" "--test-flag" "with the configured flags"
 }
 
+test_restore_dry_run_says_when_a_pane_is_not_free() {
+	# A dry run used to print straight from the snapshot, so it listed panes the
+	# real run would refuse -- the reason a snapshot with stale coordinates read
+	# as a healthy list of resumable work. It now samples the pane.
+	local pane out _i
+	pane=$(seed_agent_with_identity)
+	corral save >/dev/null
+
+	# The agent is still running in the pane, so a resume could not happen.
+	out=$(corral restore --dry-run)
+	assert_contains "$out" "claude --resume sid-restore" "the entry is still shown"
+	assert_contains "$out" "busy with 2.1.238" "and it says what is in the way"
+
+	# Put a shell back, the way a resurrect restore would, and the caveat goes.
+	tm send-keys -t "$pane" C-c
+	for _i in 1 2 3 4 5 6 7 8 9 10; do
+		[[ $(tm display-message -p -t "$pane" '#{pane_current_command}') != 2.1.238 ]] && break
+		sleep 0.2
+	done
+	out=$(corral restore --dry-run)
+	assert_contains "$out" "claude --resume sid-restore" "still resumable"
+	assert_not_contains "$out" "busy with" "with nothing in the way now"
+}
+
 test_restore_types_the_command_into_the_pane() {
 	local pane out
 	pane=$(seed_agent_with_identity)
@@ -791,6 +819,7 @@ TESTS=(
 	scan_skips_panes_with_no_agent
 	save_snapshots_the_resumable_panes
 	restore_dry_run_builds_the_resume_command
+	restore_dry_run_says_when_a_pane_is_not_free
 	restore_types_the_command_into_the_pane
 	restore_survives_a_real_server_restart
 	restore_skips_a_pane_whose_session_was_renamed
