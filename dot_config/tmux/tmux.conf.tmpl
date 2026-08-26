@@ -123,8 +123,12 @@ bind c new-window -c "#{pane_current_path}"
 #     tmux set -g @popup_open 0
 #
 # Both pickers preview through scripts/peek-preview.sh, which trims the blank
-# rows capture-pane pads to the bottom of a pane and shows the last screenful
-# of real output, so the preview opens at the END of the buffer, not the top.
+# rows capture-pane pads to the bottom of a pane, and open the preview window
+# with fzf's `follow` flag, which anchors it to the last line it was given. The
+# trim is what makes follow land on real output instead of on the padding. The
+# scroll indicator in the preview's top-right corner reads as an offset into
+# the history (e.g. 39/60) rather than the 1/N that made a preview already
+# sitting at the end look like it was parked at the top.
 # -----------------------------------------------------------------------------
 
 # Fuzzy-JUMP to any window across ALL sessions, then switch to it (prefix + j).
@@ -134,7 +138,7 @@ bind j if-shell -F '#{@popup_open}' {
     display-message 'a popup is already open'
 } {
     set -g @popup_open 1
-    display-popup -E -w 70% -h 70% "tmux list-windows -a -F '#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]' | fzf --reverse --no-sort --preview '~/.config/tmux/scripts/peek-preview.sh {1}' --preview-window=down:60% | awk '{print \$1}' | xargs -r tmux switch-client -t ; tmux set -g @popup_open 0"
+    display-popup -E -w 70% -h 70% "tmux list-windows -a -F '#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]' | fzf --reverse --no-sort --preview '~/.config/tmux/scripts/peek-preview.sh {1}' --preview-window=down:60%,follow | awk '{print \$1}' | xargs -r tmux switch-client -t ; tmux set -g @popup_open 0"
 }
 
 # Dedicated 'claude' scratch session in a popup, TOGGLE (prefix + C-p).
@@ -163,7 +167,7 @@ bind P if-shell -F '#{@popup_open}' {
     display-message 'a popup is already open'
 } {
     set -g @popup_open 1
-    display-popup -w 85% -h 85% -E 'target=$(tmux list-windows -a -F "#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]" | fzf --reverse --no-sort --preview "~/.config/tmux/scripts/peek-preview.sh {1}" --preview-window=down:60% | awk "{print \$1}"); if [ -n "$target" ]; then sess="${target%%:*}"; orig=$(tmux display-message -p -t "$sess" "#{window_index}"); tmux select-window -t "$target"; TMUX= tmux attach -f ignore-size -t "$sess"; tmux select-window -t "$sess:$orig"; fi; tmux set -g @popup_open 0'
+    display-popup -w 85% -h 85% -E 'target=$(tmux list-windows -a -F "#{session_name}:#{window_index}  #{window_name}  [#{pane_current_command}]" | fzf --reverse --no-sort --preview "~/.config/tmux/scripts/peek-preview.sh {1}" --preview-window=down:60%,follow | awk "{print \$1}"); if [ -n "$target" ]; then sess="${target%%:*}"; orig=$(tmux display-message -p -t "$sess" "#{window_index}"); tmux select-window -t "$target"; TMUX= tmux attach -f ignore-size -t "$sess"; tmux select-window -t "$sess:$orig"; fi; tmux set -g @popup_open 0'
 }
 
 # Fuzzy-switch by AGENT STATE across all sessions (prefix + a).
@@ -387,7 +391,7 @@ set-hook -g pane-exited 'run-shell -b "{{ .chezmoi.homeDir }}/.local/bin/corral 
 #
 #   attention-ranked picker on the `prefix + a` slot vox used to own (rows come
 #   out of corral sorted blocked > done > working > idle; field 2 is the target):
-#     bind a display-popup -E -w 80% -h 70% "~/.local/bin/corral list --agents | fzf --reverse --header-lines=1 --preview 'tmux capture-pane -ep -t {2}' --preview-window=down:60% | awk '{print \$2}' | xargs -r tmux switch-client -t"
+#     bind a display-popup -E -w 80% -h 70% "~/.local/bin/corral list --agents | fzf --reverse --header-lines=1 --preview '~/.config/tmux/scripts/peek-preview.sh {2}' --preview-window=down:60%,follow | awk '{print \$2}' | xargs -r tmux switch-client -t"
 
 # Initialize TMUX plugin manager (keep this line at the very bottom of tmux.conf)
 run "$HOME/.config/tmux/plugins/tpm/tpm"

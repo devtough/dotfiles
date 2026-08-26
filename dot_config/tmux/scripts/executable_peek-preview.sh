@@ -2,10 +2,19 @@
 # fzf preview for the window pickers (prefix j / prefix P).
 #
 # `tmux capture-pane` always returns a full pane's worth of rows, padding the
-# bottom with blanks, so a naive preview opens on the TOP of the screen — which
-# for a busy pane is the oldest thing on it. This trims the trailing blank rows
-# and hands fzf exactly one preview-window's worth of the newest output, so the
-# preview is anchored to the end of the buffer.
+# bottom with blanks. Those blanks are the whole problem: fzf's `follow` flag
+# anchors the preview to the last line it is given, so without this trim it
+# would faithfully anchor to the bottom of the padding and show a screenful of
+# nothing. Cut back to the last row with real content and let follow do the
+# scrolling.
+#
+# This deliberately does NOT tail to one screenful. It used to, using
+# FZF_PREVIEW_LINES, and that was wrong twice over: fzf reports one more usable
+# line than it actually has (a 22-line preview window given 22 lines still
+# scrolls), so the preview came up one line short of the bottom and drew a
+# "1/22" scroll indicator that reads exactly like the top of a long buffer. And
+# capping the output at a screenful threw away the history that makes the
+# preview worth scrolling. Hand over everything and let fzf position it.
 #
 # usage: peek-preview.sh <session:window> [history-lines]
 set -u
@@ -20,5 +29,4 @@ tmux capture-pane -pe -S "-$history" -t "$target" 2>/dev/null |
         { probe = $0; gsub(/\033\[[0-9;?]*[ -\/]*[@-~]/, "", probe)
           if (probe ~ /[^[:space:]]/) last = NR }
         END { for (i = 1; i <= last; i++) print buf[i] }
-    ' |
-    tail -n "${FZF_PREVIEW_LINES:-40}"
+    '
