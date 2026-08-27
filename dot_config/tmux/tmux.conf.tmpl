@@ -314,6 +314,18 @@ bind S display-message "naming session..." \; run-shell -b "~/.local/bin/tmux-na
 set -g pane-border-style '#{?#{==:#{@corral_state},done},fg=#22da6e,#{?#{==:#{@corral_state},blocked},fg=#ef5350,fg=#687686}}'
 set -g pane-active-border-style '#{?#{==:#{@corral_win_state},done},fg=#22da6e,#{?#{==:#{@corral_win_state},blocked},fg=#ef5350,fg=#82aaff}}'
 
+# ...and the attribution the divider cannot give. In a two-pane split the
+# whole divider is drawn in the active border style, so a colour there can
+# only ever say "this window", never which pane. Border-status lines can: each
+# pane owns one, labelled with its index, its corral glyph in the strip
+# colours, and what is running in it. Total cost is ONE terminal row per
+# window (side-by-side titles share a row; a stacked pane's title reuses the
+# divider row) -- and only in windows that are actually split: the hook flips
+# pane-border-status per window as panes come and go, so full-screen
+# single-pane windows pay nothing.
+set -g pane-border-format ' #[fg=#687686]#{pane_index} #{?#{==:#{@corral_state},done},#[fg=#22da6e]✓,#{?#{==:#{@corral_state},blocked},#[fg=#ef5350]▲,#{?#{==:#{@corral_state},working},#[fg=#d6deeb]●,#{?#{==:#{@corral_state},idle},#[fg=#687686]■,#[fg=#687686]·}}}} #[fg=#687686]#{pane_current_command} '
+set-hook -g window-layout-changed 'set -wF pane-border-status "#{?#{>:#{window_panes},1},top,off}"'
+
 set -g message-style "bg=#1d3b53,fg=#d6deeb"
 set -g message-command-style "bg=#1d3b53,fg=#d6deeb"
 

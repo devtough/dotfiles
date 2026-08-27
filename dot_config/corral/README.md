@@ -226,15 +226,19 @@ agent really did die is caught by `corral scan` reading the screen, or by
 The rollup tells you something needs you. Three surfaces answer where, and
 they cover different ground:
 
-    pane borders      two formats, zero polling. pane-border-style reads
+    pane borders      three formats, zero polling. pane-border-style reads
                       each pane's own @corral_state (green unread done, red
                       blocked, theme grey otherwise) but only ever paints
-                      borders between two inactive panes. The common two-pane
+                      borders between two inactive panes; the two-pane
                       divider belongs entirely to the active border, so
-                      pane-active-border-style reads @corral_win_state
-                      instead: the divider turning green means "a pane in
-                      this window needs you". Single-pane windows draw no
-                      borders -- there the glyph and the strip carry it.
+                      pane-active-border-style reads @corral_win_state and a
+                      coloured divider means "a pane in this window". Which
+                      pane is the border-status line's job: in split windows
+                      every pane owns a title line -- index, corral glyph in
+                      the strip colours, command -- one terminal row per
+                      window, toggled off automatically when a window is a
+                      single full-screen pane (which also draws no borders;
+                      there the window glyph and the strip carry it).
 
     window list       #{E:@corral_win_glyph} puts the same ▲/✓/● glyph on each
                       window. Pure format, no polling — every state write
