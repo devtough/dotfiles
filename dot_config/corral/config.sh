@@ -40,11 +40,3 @@
 # if the bar feels slow to admit an agent has stopped; the cost is one scan
 # (~150ms for six panes) per interval.
 : "${CORRAL_TICK_SECS:=30}"
-
-# "Engaged" for corral-hook's at-finish check alone: a turn that ends while
-# the pane is focused and the client has seen input this recently never
-# becomes a done badge -- it finished under your hands. (The refresh sweep
-# does not use a window; it clears on any input newer than the badge.) The
-# hook does not source this file -- it reads CORRAL_ENGAGED_SECS from its
-# environment, so export it where the agents start if you change it.
-: "${CORRAL_ENGAGED_SECS:=30}"
