@@ -445,19 +445,23 @@ set -ag status-right "#(~/.local/bin/corral tick)"
 # pipeline (row format, preview, and why), and two bindings open it. Both wear
 # the same @popup_open guard as the window pickers above.
 #
-# The mouse binding fires for a click anywhere on status-right, so it checks
-# which named range the click landed in: corral wraps the strip in
-# #[range=user|corral], and a click on CPU/RAM resolves to a different range
-# and falls through to nothing.
+# The mouse binding is on `Status`, not `StatusRight`: a click inside a
+# #[range=user|X] range triggers the Status key with X in mouse_status_range
+# (bare, no "user|" prefix) -- it never reaches StatusRight, whose ranges are
+# a different kind. And Status has a default worth keeping: clicking a window
+# name switches to it (switch-client -t =, where = is the click target), so
+# every click that is not on the strip falls through to exactly that.
 bind a if-shell -F '#{@popup_open}' {
     display-message 'a popup is already open'
 } {
     set -g @popup_open 1
     display-popup -E -w 80% -h 70% "~/.config/tmux/scripts/corral-picker.sh ; tmux set -g @popup_open 0"
 }
-bind -n MouseDown1StatusRight if-shell -F '#{&&:#{==:#{mouse_status_range},user|corral},#{!=:#{@popup_open},1}}' {
+bind -n MouseDown1Status if-shell -F '#{&&:#{==:#{mouse_status_range},corral},#{!=:#{@popup_open},1}}' {
     set -g @popup_open 1
     display-popup -E -w 80% -h 70% "~/.config/tmux/scripts/corral-picker.sh ; tmux set -g @popup_open 0"
+} {
+    switch-client -t =
 }
 
 # Initialize TMUX plugin manager (keep this line at the very bottom of tmux.conf)
