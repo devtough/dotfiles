@@ -11,9 +11,6 @@ for d in /opt/homebrew/lib/ruby/gems/*/bin(N); do
   export PATH="$d:$PATH"
 done
 
-# Node — fnm. --use-on-cd auto-switches on .node-version / .nvmrc
-eval "$(fnm env --use-on-cd --shell zsh)"
-
 # try — scratch project dirs, date-prefixed. Must come after the gems PATH above.
 export TRY_PATH="$HOME/Work/tries"
 eval "$(try init)"
@@ -21,7 +18,7 @@ eval "$(try init)"
 # =============================================================================
 # Completions
 # =============================================================================
-# brew's site-functions (_gh, _az, _aws, _fnm, _chezmoi) is already on FPATH via
+# brew's site-functions (_gh, _az, _aws, _mise, _chezmoi) is already on FPATH via
 # `brew shellenv`. ~/.zfunc holds ones I generated: _uv, _uvx, _codex.
 # Regenerate those after upgrades:
 #   uv generate-shell-completion zsh > ~/.zfunc/_uv
@@ -88,3 +85,6 @@ alias vi="nvim"
 alias v="nvim"
 
 mkcd() { mkdir -p "$1" && cd "$1"; }
+
+# Dev tools and per-project environment variables. Keep this after PATH changes.
+eval "$(mise activate zsh)"
