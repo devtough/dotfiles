@@ -1,0 +1,14 @@
+id = "git-sync"
+name = "Git Sync"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Reports each workspace's ahead/behind-upstream state as the $sync sidebar token."
+platforms = ["macos", "linux"]
+
+# Startup only. There is no herdr event for "you just committed" or "someone
+# pushed upstream", so the sidebar token has to come from a poller rather than
+# from event hooks the way tab-numbers works. herdr-git-sync --watch is that
+# poller; start.sh detaches it so plugin startup isn't blocked by a loop that
+# never returns.
+[[startup]]
+command = ["./start.sh"]

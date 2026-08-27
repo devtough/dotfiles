@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# Publish a per-agent $ctx token for the herdr sidebar's agent rows.
+#
+#   herdr-agent-ctx            report once and exit
+#   herdr-agent-ctx --watch    report every INTERVAL seconds until killed
+#
+# Why this exists: sidebar rows can show `terminal_title_stripped`, but that is
+# just whatever OSC title the agent happened to write, so it means different
+# things per agent:
+#
+#   claude  writes the conversation topic, prefixed with a state glyph. herdr's
+#           detection manifest matches both the U+2733 idle marker and the
+#           U+25D0-U+25D3 busy spinner, but terminal_title_stripped only strips
+#           the former -- so a working row keeps an *animating* first character.
+#   codex   writes basename($PWD), truncated by codex itself to 24 bytes
+#           ("2026-08-19-son-office..."). No topic at all.
+#
+# $ctx normalizes that: pass a real topic through (spinner removed), and when the
+# agent published nothing but its directory, compose a label from context
+# instead. ~/Work/tries entries are named YYYY-MM-DD-<slug>; the date is noise in
+# a 30-column sidebar, so only the slug survives.
+#
+# Mirrors herdr-git-sync: same --watch/pidfile/TTL discipline, same reason for
+# being a poller (no herdr event fires when an agent rewrites its title).
+
+set -uo pipefail
+
+SOURCE=agent-ctx
+INTERVAL=${HERDR_AGENT_CTX_INTERVAL:-5}
+# Outlive one missed cycle, but expire if this script dies, so the sidebar never
+# shows a label that stopped being recomputed.
+TTL_MS=$(( (INTERVAL * 3 + 15) * 1000 ))
+
+herdr=${HERDR_BIN:-herdr}
+command -v "$herdr" >/dev/null || herdr="$HOME/.local/bin/herdr"
+
+report_once() {
+  "$herdr" agent list 2>/dev/null | HERDR_BIN="$herdr" SOURCE="$SOURCE" TTL_MS="$TTL_MS" python3 -c '
+import json, os, re, subprocess, sys
+
+herdr  = os.environ["HERDR_BIN"]
+source = os.environ["SOURCE"]
+ttl    = os.environ["TTL_MS"]
+
+# Braille (Claude Code <= 2.1.227) and half-circles (2.1.228+) are the busy
+# spinner; U+2733 is the idle marker. See claude.toml osc_title_* rules.
+SPINNER  = re.compile(r"^[⠀-⣿◐-◓✳]\s*")
+TRY_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)$")
+
+def dirlabel(cwd):
+    """basename(cwd), minus the YYYY-MM-DD- prefix for ~/Work/tries entries."""
+    base = os.path.basename(cwd.rstrip("/")) or cwd
+    m = TRY_DATE.match(base)
+    return m.group(2) if (m and "/tries/" in cwd.rstrip("/") + "/") else base
+
+def branch(cwd):
+    r = subprocess.run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+                       capture_output=True, text=True)
+    b = r.stdout.strip()
+    # Detached HEAD reports "HEAD", which is not worth a sidebar column.
+    return b if (r.returncode == 0 and b and b != "HEAD") else None
+
+def published_only_its_cwd(title, cwd):
+    """codex writes basename(cwd) self-truncated to 24 bytes; detect that."""
+    base = os.path.basename(cwd.rstrip("/"))
+    stem = title.rstrip(".")
+    return bool(stem) and base.startswith(stem)
+
+try:
+    agents = json.load(sys.stdin)["result"]["agents"]
+except Exception:
+    sys.exit(0)
+
+for a in agents:
+    pane = a.get("pane_id")
+    if not pane:
+        continue
+    raw = a.get("terminal_title") or ""
+    cwd = a.get("foreground_cwd") or a.get("cwd") or ""
+    topic = SPINNER.sub("", raw).strip()
+
+    # An OSC title can blink empty -- an agent redrawing, restarting, or
+    # clearing it between states. Without the $ctxsrc marker below, one empty
+    # sample would overwrite a real topic with the directory fallback and the
+    # sidebar would flicker. $ctxsrc records which branch produced $ctx so a
+    # topic survives the blink; only $ctx is ever referenced by sidebar rows.
+    prev     = a.get("tokens", {}) or {}
+    prev_ctx = prev.get("ctx")
+    prev_src = prev.get("ctxsrc")
+
+    if topic and not published_only_its_cwd(topic, cwd):
+        ctx, src = topic, "topic"
+    elif prev_src == "topic" and prev_ctx:
+        # Hold the last known topic and refresh its TTL.
+        ctx, src = prev_ctx, "topic"
+    elif cwd:
+        base = dirlabel(cwd)
+        b = branch(cwd)
+        ctx, src = (f"{base} · {b}" if b else base), "dir"
+    else:
+        ctx, src = "", ""
+
+    cmd = [herdr, "pane", "report-metadata", pane, "--source", source]
+    cmd += (["--token", f"ctx={ctx}", "--token", f"ctxsrc={src}", "--ttl-ms", ttl]
+            if ctx else ["--clear-token", "ctx", "--clear-token", "ctxsrc"])
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+}
+
+if [ "${1:-}" = "--watch" ]; then
+  # One watcher per session, so a keybinding or a second shell can't stack them.
+  pidfile="${TMPDIR:-/tmp}/herdr-agent-ctx-${HERDR_SESSION:-default}.pid"
+  if [ -r "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    echo "herdr-agent-ctx already watching (pid $(cat "$pidfile"))" >&2
+    exit 0
+  fi
+  echo $$ >"$pidfile"
+  trap 'rm -f "$pidfile"' EXIT INT TERM
+
+  while :; do
+    report_once
+    sleep "$INTERVAL"
+  done
+else
+  report_once
+fi

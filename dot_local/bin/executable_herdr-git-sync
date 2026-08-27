@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Report each Herdr workspace's ahead/behind-upstream state as the $sync token.
+#
+#   herdr-git-sync            report once and exit
+#   herdr-git-sync --watch    report every INTERVAL seconds until killed
+#
+# Token values: "↑2" ahead, "↓1" behind, "↑2↓1" diverged, "✓" in sync,
+# "—" no upstream (or detached HEAD). Non-repo workspaces get the token cleared.
+#
+# Talks to whichever server $HERDR_SESSION names, so run it from inside the
+# session you want it to decorate.
+
+set -uo pipefail
+
+SOURCE=git-sync
+INTERVAL=${HERDR_GIT_SYNC_INTERVAL:-10}
+# Outlive one missed cycle, but expire if this script dies, so the sidebar
+# never shows a value that stopped being recomputed.
+TTL_MS=$(( (INTERVAL * 3 + 15) * 1000 ))
+
+herdr=${HERDR_BIN:-herdr}
+command -v "$herdr" >/dev/null || herdr="$HOME/.local/bin/herdr"
+
+sync_state() {
+  local dir=$1 upstream counts ahead behind out=
+
+  git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return 1
+
+  upstream=$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)
+  [ -n "$upstream" ] || { printf '%s' '—'; return 0; }
+
+  counts=$(git -C "$dir" rev-list --left-right --count "$upstream...HEAD" 2>/dev/null) || { printf '%s' '—'; return 0; }
+  behind=${counts%%[[:space:]]*}
+  ahead=${counts##*[[:space:]]}
+
+  [ "$ahead" -gt 0 ] 2>/dev/null && out="↑$ahead"
+  [ "$behind" -gt 0 ] 2>/dev/null && out="$out↓$behind"
+  printf '%s' "${out:-✓}"
+}
+
+report_once() {
+  local ws dir value
+  # One cwd per workspace: the focused pane wins, otherwise the first listed.
+  while IFS=$'\t' read -r ws dir; do
+    [ -n "$ws" ] || continue
+    if value=$(sync_state "$dir"); then
+      "$herdr" workspace report-metadata "$ws" \
+        --source "$SOURCE" --token "sync=$value" --ttl-ms "$TTL_MS" >/dev/null 2>&1
+    else
+      "$herdr" workspace report-metadata "$ws" \
+        --source "$SOURCE" --clear-token sync >/dev/null 2>&1
+    fi
+  done < <(
+    "$herdr" pane list 2>/dev/null |
+      jq -r '.result.panes
+             | group_by(.workspace_id)[]
+             | ((map(select(.focused)) | first) // .[0]) as $p
+             | [$p.workspace_id, ($p.foreground_cwd // $p.cwd)]
+             | @tsv'
+  )
+}
+
+if [ "${1:-}" = "--watch" ]; then
+  # One watcher per session, so a keybinding or a second shell can't stack them.
+  pidfile="${TMPDIR:-/tmp}/herdr-git-sync-${HERDR_SESSION:-default}.pid"
+  if [ -r "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    echo "herdr-git-sync already watching (pid $(cat "$pidfile"))" >&2
+    exit 0
+  fi
+  echo $$ >"$pidfile"
+  trap 'rm -f "$pidfile"' EXIT INT TERM
+
+  while :; do
+    report_once
+    sleep "$INTERVAL"
+  done
+else
+  report_once
+fi

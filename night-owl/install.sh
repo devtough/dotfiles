@@ -68,19 +68,12 @@ else
   echo "obsidian: no --vault given — copy night-owl-colors.css into <vault>/.obsidian/snippets/ yourself"
 fi
 
-# --- herdr: append the [theme] block if the config doesn't define one --------
-herdr_cfg="$HOME/.config/herdr/config.toml"
-if [[ -f $herdr_cfg ]]; then
-  if grep -qE '^\[theme\]' "$herdr_cfg"; then
-    echo "herdr: config already defines [theme] — merge $HERE/herdr-theme-block.toml by hand"
-  else
-    { printf '\n'; cat "$HERE/herdr-theme-block.toml"; } >>"$herdr_cfg"
-    command -v herdr >/dev/null && herdr server reload-config >/dev/null 2>&1
-    echo "herdr: theme block appended to config.toml"
-  fi
-else
-  echo "herdr: no config at $herdr_cfg — skipped"
-fi
+# --- herdr: nothing to do; chezmoi owns the config now -----------------------
+# The [theme] block used to be appended here. ~/.config/herdr/config.toml is a
+# chezmoi-managed file as of 2026-08-19 (dot_config/herdr/config.toml), with the
+# contents of herdr-theme-block.toml inlined, so appending would fight `chezmoi
+# apply`. herdr-theme-block.toml is kept as the reference copy of that block.
+echo "herdr: managed by chezmoi — run 'chezmoi apply', not this script"
 
 # --- Slack: manual paste ------------------------------------------------------
 echo "slack: paste this in Preferences -> Themes -> Import (sidebar only):"

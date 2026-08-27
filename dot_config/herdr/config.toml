@@ -1,0 +1,182 @@
+onboarding = false
+# Herdr configuration.
+#
+# MANAGED BY CHEZMOI — source is dot_config/herdr/config.toml in the dotfiles
+# repo. Edit there and `chezmoi apply`; edits made here are overwritten.
+#
+# The [theme] block used to be appended by night-owl/install.sh. It is inlined
+# below now that chezmoi owns this file, and install.sh no longer touches it.
+#
+# NOT Night Owl: this machine's ghostty is themed Rose Pine, deliberately, and
+# name = "terminal" makes herdr follow whatever the terminal is. Retheme ghostty
+# and herdr comes along; only `accent` below needs changing by hand.
+
+[theme]
+# "terminal" renders through the ANSI palette, so herdr follows whatever the
+# host terminal's theme is (Night Owl on the macs, the omarchy palette on Arch)
+# the same way tmux does. accent is the one role ANSI can't supply.
+name = "terminal"
+auto_switch = false
+
+[theme.custom]
+panel_bg = "reset"   # transparent to the terminal background
+# Rose Pine "foam". ghostty on this machine is themed Rose Pine (see
+# ~/Library/Application Support/com.mitchellh.ghostty/config.ghostty), and
+# name = "terminal" above means herdr's base colors follow it automatically --
+# accent is the one role the ANSI palette can't supply, so it is set by hand.
+# Swap for iris "#c4a7e7" if you want Rose Pine's signature purple instead.
+accent = "#9ccfd8"
+
+[keys]
+# C-a everywhere, matching tmux. herdr has no send-prefix action, so ctrl+a
+# stops being readline's beginning-of-line inside panes — .inputrc is vi-mode,
+# so that binding was not in use anyway.
+prefix = "ctrl+a"
+
+# tmux parity: prefix+d detaches. herdr's default prefix+q is dropped.
+detach = "prefix+d"
+
+# Bounce between the last two panes. tmux spelled this C-\ through the is_vim
+# guard; herdr has no vim-aware passthrough, so this uses tmux's own default
+# last-pane key instead. (prefix+prefix is reserved: herdr sends a literal
+# prefix key, which is how you still reach readline's ctrl+a inside a pane.)
+last_pane = "prefix+semicolon"
+
+# tmux parity for the two renames: `prefix ,` renames the window (herdr: tab)
+# and `prefix $` renames the session (herdr: workspace). herdr rejects
+# "prefix+dollar" as a key name, so $ is spelled as the chord that produces it.
+# These replace herdr's defaults of prefix+shift+t / prefix+shift+w.
+#
+# Note the tab-numbers plugin rewrites whatever you type here, re-applying the
+# position prefix on tab.renamed — so type "herdr", not "3 herdr".
+rename_tab = "prefix+comma"
+rename_workspace = "prefix+shift+4"
+
+# Unconditional pane navigation, no prefix. Kept as the escape hatch for the
+# conditional ctrl+hjkl binds below: if those ever misbehave, these still work.
+focus_pane_left = "ctrl+alt+h"
+focus_pane_down = "ctrl+alt+j"
+focus_pane_up = "ctrl+alt+k"
+focus_pane_right = "ctrl+alt+l"
+
+# Jump straight to an agent row by index.
+focus_agent = "prefix+alt+1..9"
+
+# prefix+a: split right and start Claude there — the herdr version of the tmux
+# `prefix \` bind. tmux's own prefix+a was the vox agent picker, retired
+# 2026-08-04, so the key is free and the mnemonic carries over.
+[[keys.command]]
+key = "prefix+a"
+type = "shell"
+command = "herdr-claude-split right"
+
+# prefix+shift+a: same thing, split downward (tmux `prefix _`).
+[[keys.command]]
+key = "prefix+shift+a"
+type = "shell"
+command = "herdr-claude-split down"
+
+# prefix+ctrl+p: modal Claude scratch popup (tmux `prefix C-p`). herdr's popup
+# is session-modal and leaves the tab layout alone, so it needs none of the
+# @popup_open bookkeeping the tmux version carried.
+[[keys.command]]
+key = "prefix+ctrl+p"
+type = "popup"
+command = "claude --dangerously-skip-permissions --chrome"
+width = "85%"
+height = "85%"
+
+# ctrl+hjkl: the tmux is_vim guard, rebuilt. herdr has no declarative condition
+# on a binding -- but neither did tmux, which shelled out to ps on every press
+# and branched. herdr-nav does the same with better inputs: `pane process-info`
+# reports the pane's foreground processes, and `pane send-keys` hands the key
+# back to the app when the app should own it.
+#
+# Measured ~7ms per herdr call, so ~15ms plus a shell spawn per press.
+#
+# This does NOT conflict with lua/plugins/smart-splits.lua -- that handles the
+# nvim-internal moves and calls `herdr pane focus` at the edge; this handles
+# every other pane. Back out by deleting these four blocks; ctrl+alt+hjkl and
+# prefix+hjkl both keep working.
+[[keys.command]]
+key = "ctrl+h"
+type = "shell"
+command = "herdr-nav left"
+
+[[keys.command]]
+key = "ctrl+j"
+type = "shell"
+command = "herdr-nav down"
+
+[[keys.command]]
+key = "ctrl+k"
+type = "shell"
+command = "herdr-nav up"
+
+[[keys.command]]
+key = "ctrl+l"
+type = "shell"
+command = "herdr-nav right"
+
+# prefix+y: copy the focused pane's cwd (tmux `prefix y`).
+[[keys.command]]
+key = "prefix+y"
+type = "shell"
+command = "herdr-copy-cwd"
+
+[ui]
+# Room for "branch  git_status  ↑2↓1" on the second space row.
+sidebar_width = 30
+
+# Collapsed presentation: "compact" keeps the narrow status rail
+# (workspace number + state dot), "hidden" gives it zero width.
+sidebar_collapsed_mode = "compact"
+
+# Set true to open straight into the rail. Takes effect on next launch.
+sidebar_start_collapsed = false
+
+[ui.sidebar.spaces]
+# $sync is reported by ~/.local/bin/herdr-git-sync: ↑ahead, ↓behind, ✓ in sync,
+# — no upstream. Cleared for workspaces that aren't git repos. The watcher is
+# started by the git-sync plugin (plugins/git-sync); without it this token is
+# blank, which is how it sat from 2026-08-13 until now.
+rows = [
+  ["state_icon", "workspace"],
+  ["branch", "git_status", { token = "$sync", fg = "#9ccfd8" }],
+]
+
+# Background agents are the whole point of running several at once, so let them
+# say so. "system" asks the OS notification service directly.
+[ui.toast]
+delivery = "system"
+delay_seconds = 1
+
+[ui.sound]
+enabled = true
+
+[session]
+# Restores supported agent panes into their real conversation sessions after a
+# server restart. This is what tmux-resurrect never managed: its process
+# allow-list is vi/vim/nvim/emacs/man/less/more/tail/top/htop/irssi/weechat/mutt,
+# so `claude` always came back as a bare shell.
+resume_agents_on_restore = true
+
+[experimental]
+# The closest thing to @resurrect-capture-pane-contents: keeps recent pane
+# screen history across full server restarts. Takes effect on the next restart.
+pane_history = true
+
+# Agent rows. $ctx is published by ~/.local/bin/herdr-agent-ctx (agent-ctx
+# plugin): the agent's own topic when it publishes one, with the busy spinner
+# removed, and a context-built label when it doesn't -- ~/Work/tries entries
+# reduced to their slug, plus the git branch where there is one.
+#
+# `workspace` is deliberately absent: with a single space it printed the same
+# value on every row. It is worth adding back if a second space appears.
+[ui.sidebar.agents]
+row_gap = 0
+rows = [["state_icon", "tab", "agent"]]
+
+[ui.sidebar.agents.rows_by_agent]
+claude = [["state_icon", "tab"], [{ token = "$ctx", dim = true }]]
+codex = [["state_icon", "tab"], [{ token = "$ctx", dim = true }]]

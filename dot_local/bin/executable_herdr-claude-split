@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Split the focused herdr pane and start Claude Code in the new pane.
+#
+#   herdr-claude-split [right|down]      (default: right)
+#
+# Bound to prefix+a / prefix+shift+a in ~/.config/herdr/config.toml, replacing
+# the tmux `prefix \` and `prefix _` binds. tmux could pass the command straight
+# to split-window; herdr splits that into two calls on purpose — `pane split`
+# hands back a shell, then `agent start` launches claude in it and blocks until
+# the agent is actually detected, so the pane registers as an agent in the
+# sidebar instead of an anonymous shell.
+
+set -uo pipefail
+
+direction=${1:-right}
+case $direction in
+  right|down) ;;
+  *) echo "herdr-claude-split: direction must be 'right' or 'down'" >&2; exit 2 ;;
+esac
+
+herdr=${HERDR_BIN:-herdr}
+command -v "$herdr" >/dev/null || herdr="$HOME/.local/bin/herdr"
+
+# keys.command entries run detached, so HERDR_PANE_ID is not guaranteed here.
+# Fall back to whichever pane the server currently reports as focused.
+pane=${HERDR_PANE_ID:-}
+if [ -z "$pane" ]; then
+  pane=$("$herdr" pane list 2>/dev/null |
+    jq -r '.result.panes | map(select(.focused)) | first | .pane_id // empty')
+fi
+[ -n "$pane" ] || { echo "herdr-claude-split: no focused pane" >&2; exit 1; }
+
+new=$("$herdr" pane split "$pane" --direction "$direction" --focus 2>/dev/null |
+  jq -r '.result.pane.pane_id // empty')
+[ -n "$new" ] || { echo "herdr-claude-split: split failed" >&2; exit 1; }
+
+# Agent names must be unique within the session; the pane suffix guarantees it.
+exec "$herdr" agent start "claude-${new##*:}" --kind claude --pane "$new" \
+  -- --dangerously-skip-permissions --chrome

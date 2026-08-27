@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# herdr-nav <left|down|up|right>
+#
+# The herdr equivalent of the tmux is_vim guard. tmux spelled it:
+#
+#   is_vim="ps -o state= -o comm= -t '#{pane_tty}' | grep -iqE '...(vim|fzf)...'"
+#   bind -n C-h if-shell "$is_vim" 'send-keys C-h' 'select-pane -L'
+#
+# i.e. tmux was never declaratively conditional either -- it shelled out on every
+# keypress and branched. herdr has both halves of that: `pane process-info`
+# reports the pane's foreground processes (no ps/tty parsing needed), and
+# `pane send-keys` re-injects the key when the pane app should own it.
+#
+# Bind with a [[keys.command]] entry of type "shell" -- see config.toml.
+
+set -uo pipefail
+
+dir=${1:-}
+case $dir in
+  left)  key=ctrl+h ;;
+  down)  key=ctrl+j ;;
+  up)    key=ctrl+k ;;
+  right) key=ctrl+l ;;
+  *) echo "usage: herdr-nav <left|down|up|right>" >&2; exit 2 ;;
+esac
+
+herdr=${HERDR_BIN:-herdr}
+command -v "$herdr" >/dev/null || herdr="$HOME/.local/bin/herdr"
+
+# Reentrancy guard. herdr intercepts keys from the attached client, while
+# `pane send-keys` injects into the pane's PTY, so the two paths should not feed
+# each other -- but an unguarded script would fork bomb on a held-down key if
+# they ever did. mkdir is atomic, so a nested call exits immediately.
+lock="${TMPDIR:-/tmp}/herdr-nav-${dir}.lock"
+mkdir "$lock" 2>/dev/null || exit 0
+trap 'rmdir "$lock" 2>/dev/null' EXIT INT TERM
+
+# keys.command entries run detached, so HERDR_PANE_ID is not guaranteed.
+pane=${HERDR_PANE_ID:-}
+if [ -z "$pane" ]; then
+  pane=$("$herdr" pane list 2>/dev/null |
+    jq -r '.result.panes | map(select(.focused)) | first | .pane_id // empty')
+fi
+[ -n "$pane" ] || exit 0
+
+# Same process set the tmux guard matched.
+if "$herdr" pane process-info --pane "$pane" 2>/dev/null |
+   jq -e --arg re '^g?(view|l?n?vim?x?|fzf)(diff)?$' \
+     '.result.process_info.foreground_processes
+      | map(.argv0 // "") | any(test($re))' >/dev/null 2>&1; then
+  "$herdr" pane send-keys "$pane" "$key" >/dev/null 2>&1
+  exit 0
+fi
+
+"$herdr" pane focus --direction "$dir" --pane "$pane" >/dev/null 2>&1

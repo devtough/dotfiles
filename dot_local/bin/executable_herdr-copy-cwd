@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Copy the focused herdr pane's working directory to the clipboard, the tmux
+# `prefix y` bind. Bound to prefix+y in ~/.config/herdr/config.toml.
+#
+# Uses foreground_cwd (where the running process actually is) in preference to
+# cwd (where the shell started), which is what you want when a pane is sitting
+# inside an agent or an editor.
+
+set -uo pipefail
+
+herdr=${HERDR_BIN:-herdr}
+command -v "$herdr" >/dev/null || herdr="$HOME/.local/bin/herdr"
+
+if command -v pbcopy >/dev/null; then
+  copy=(pbcopy)
+elif command -v wl-copy >/dev/null; then
+  copy=(wl-copy)
+else
+  echo "herdr-copy-cwd: no pbcopy or wl-copy on PATH" >&2
+  exit 1
+fi
+
+pane=${HERDR_PANE_ID:-}
+if [ -z "$pane" ]; then
+  pane=$("$herdr" pane list 2>/dev/null |
+    jq -r '.result.panes | map(select(.focused)) | first | .pane_id // empty')
+fi
+[ -n "$pane" ] || { echo "herdr-copy-cwd: no focused pane" >&2; exit 1; }
+
+cwd=$("$herdr" pane get "$pane" 2>/dev/null |
+  jq -r '.result.pane | (.foreground_cwd // .cwd) // empty')
+[ -n "$cwd" ] || { echo "herdr-copy-cwd: pane reported no cwd" >&2; exit 1; }
+
+printf '%s' "$cwd" | "${copy[@]}"
+"$herdr" notification show "Copied: $cwd" >/dev/null 2>&1 || true

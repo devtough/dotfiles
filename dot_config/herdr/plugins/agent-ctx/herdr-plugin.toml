@@ -1,0 +1,11 @@
+id = "agent-ctx"
+name = "Agent Context"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Publishes a normalized $ctx label per agent pane for the sidebar."
+platforms = ["macos", "linux"]
+
+# Startup only, same reasoning as the git-sync plugin: no herdr event fires when
+# an agent rewrites its OSC title, so this has to poll.
+[[startup]]
+command = ["./start.sh"]

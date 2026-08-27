@@ -1,0 +1,32 @@
+id = "tab-numbers"
+name = "Tab Numbers"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Keeps every tab label prefixed with its number."
+platforms = ["macos", "linux"]
+
+[[startup]]
+command = ["./renumber.sh"]
+
+[[events]]
+on = "tab.created"
+command = ["./renumber.sh"]
+
+[[events]]
+on = "tab.closed"
+command = ["./renumber.sh"]
+
+[[events]]
+on = "tab.moved"
+command = ["./renumber.sh"]
+
+[[events]]
+on = "tab.renamed"
+command = ["./renumber.sh"]
+
+# A tab whose last pane's process exits on its own (you type `exit`, the shell
+# dies) is torn down via the pane-exit path and never emits tab.closed, so the
+# remaining tabs kept stale numbers. pane.exited covers that case.
+[[events]]
+on = "pane.exited"
+command = ["./renumber.sh"]

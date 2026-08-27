@@ -58,6 +58,7 @@ pip install pre-commit    # or via pip
 | Config | rss-mac | sonbox | omarchy |
 |--------|---------|--------|---------|
 | tmux | Night Owl, `C-a` prefix, vim-tmux-navigator, fzf popups | same, minus the K8/RPK status segments | omarchy palette, `wl-copy` yank |
+| herdr | `C-a` prefix, `theme = terminal` + Rose Pine foam accent, git-sync/agent-ctx/tab-numbers plugins | same | same (accent is hardcoded, not the omarchy palette) |
 | shell | zsh — oh-my-zsh + powerlevel10k | zsh — minimal, no framework, fzf `^r` | bash — omarchy defaults |
 | git | `gh` at the nix path | `gh` at `/opt/homebrew/bin` | `gh` at `/usr/bin` |
 | nvim | LazyVim (Dec 2025 state) | LazyVim v16, snacks picker + explorer | LazyVim |
@@ -92,6 +93,67 @@ The two macs run different enough shells that the bodies live in
 `dot_zshrc.tmpl` is just a dispatcher. The same pattern carries nvim's two
 machine-state files (`lazyvim.json`, `lazy-lock.json`) — everything else in
 `.config/nvim/` is shared across all three machines.
+
+### herdr
+
+`~/.config/herdr/config.toml` was hand-maintained and untracked until 2026-08-19;
+it is now `dot_config/herdr/config.toml`. Two consequences:
+
+- **`night-owl/install.sh` no longer touches it.** It used to append the
+  `[theme]` block, skipping if the file already defined one — which it did
+  (`rose-pine`), so the block silently never landed and herdr was the one app on
+  the machine not matching the palette. The block is inlined in the tracked file
+  now; `night-owl/herdr-theme-block.toml` is kept only as the reference copy.
+- **`theme.name = "terminal"`** means herdr renders through the ANSI palette and
+  follows the host terminal, the same trick tmux uses. `accent` is the one role
+  ANSI can't supply, so it is hardcoded — currently Rose Pine foam `#9ccfd8`,
+  matching this machine's ghostty. It will look wrong if herdr ever runs on
+  omarchy.
+
+  **sonbox's ghostty is Rose Pine, not Night Owl**, and that was deliberate:
+  the config carried a comment pairing it with herdr's old `name = "rose-pine"`.
+  Only tmux on this machine is Night Owl. That config lives at
+  `~/Library/Application Support/com.mitchellh.ghostty/**config.ghostty**` — note
+  the extension. `night-owl/install.sh` looked for a bare `config` and so had
+  never themed ghostty here; its candidate list now checks `config.ghostty`
+  first. The file is still untracked by chezmoi, because
+  `.chezmoiignore.tmpl` deploys `.config/ghostty/` on omarchy only and this is a
+  different path on a different machine — worth revisiting if sonbox's terminal
+  config is ever worth version-controlling.
+
+Herdr plugins live in `dot_config/herdr/plugins/`. `plugins.json` next to them is
+a generated registry — herdr rescans the plugin directories at **server start**,
+so a new plugin does not appear on `herdr server reload-config`.
+
+- **`tab-numbers`** keeps tab labels prefixed with their number.
+- **`git-sync`** starts `~/.local/bin/herdr-git-sync --watch`, which reports each
+  workspace's ahead/behind state as the `$sync` token used by
+  `[ui.sidebar.spaces]`. Nothing started that watcher before this plugin existed,
+  so the token rendered blank from 2026-08-13 until 2026-08-19. There is no herdr
+  event for "a commit happened", which is why this is a poller and not an event
+  hook like tab-numbers.
+
+- **`agent-ctx`** starts `~/.local/bin/herdr-agent-ctx --watch`, which publishes
+  a `$ctx` token per agent pane for `[ui.sidebar.agents]`. Sidebar rows can show
+  `terminal_title_stripped` directly, but that is only ever the OSC title the
+  agent chose to write, so it means different things per agent: Claude Code
+  publishes the conversation topic behind a state glyph, codex publishes
+  `basename($PWD)` truncated to 24 bytes. `$ctx` normalizes it — real topic when
+  there is one, otherwise a label built from context, with `~/Work/tries`
+  entries reduced to their slug and the git branch appended where there is one.
+  It also strips the U+25D0–U+25D3 busy spinner that herdr *detects* (see the
+  `osc_title_working` rule in `claude.toml`) but does not strip, which otherwise
+  leaves an animating first character on the row.
+
+  A second token, `$ctxsrc`, records which branch produced `$ctx`. It is never
+  rendered; it exists because an OSC title can blink empty while an agent
+  redraws, and without it one empty sample would overwrite a real topic with the
+  directory fallback.
+
+Do not restart the herdr server from inside a Claude Code pane. The server is
+long-lived and every pane shell inherits its environment, so it captures
+`CLAUDE_CODE_CHILD_SESSION=1` and every `claude` started in any pane afterward
+silently stops writing transcripts. Restart from a plain terminal.
 
 ### Updating nvim plugins
 
