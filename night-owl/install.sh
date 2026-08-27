@@ -14,7 +14,14 @@ VAULT=""
 
 # --- Ghostty: built-in theme, just point the config at it --------------------
 ghostty_cfg=""
-for f in "$HOME/Library/Application Support/com.mitchellh.ghostty/config" "$HOME/.config/ghostty/config"; do
+# config.ghostty is checked FIRST and is the one in use on sonbox. Ghostty 1.3
+# reads it, verified via `ghostty +show-config` (font-size 15 vs the default
+# 13). The old list only had bare "config", matched nothing, and fell through to
+# creating ~/.config/ghostty/config -- a file that would have competed with the
+# real one instead of theming it.
+for f in "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty" \
+         "$HOME/Library/Application Support/com.mitchellh.ghostty/config" \
+         "$HOME/.config/ghostty/config"; do
   [[ -f $f ]] && { ghostty_cfg=$f; break; }
 done
 if [[ -n $ghostty_cfg ]]; then
