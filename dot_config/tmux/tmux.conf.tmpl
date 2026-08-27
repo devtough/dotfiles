@@ -292,17 +292,27 @@ bind w choose-tree -Zw -F "#{?pane_format,#{?pane_marked,#[reverse],}#{?#{m:✳*
 bind N display-message "naming window..." \; run-shell -b "~/.local/bin/tmux-name window '#{session_name}:#{window_index}'"
 bind S display-message "naming session..." \; run-shell -b "~/.local/bin/tmux-name session '#{session_name}'"
 
-# Pane borders carry the corral queue states: green when the pane holds an
-# unread done, red when its agent is blocked on you, the theme grey otherwise.
-# A style is expanded as a format with each pane as context, so this is the
-# same trick as the window glyph -- the hook writes @corral_state, the border
-# reads it, nothing runs on redraw. Only the two act-on-me states are
-# coloured; working and idle stay default so the border is quiet unless the
-# pane wants you. Single-pane windows draw no borders at all -- there the
-# window-list glyph and the strip are the messengers. The active pane keeps
-# the plain blue: what it wants from you is already under your cursor.
+# Pane borders carry the corral queue states: green when a pane holds an
+# unread done, red when an agent is blocked on you, the theme colours
+# otherwise. Styles are expanded as formats at draw time (same zero-polling
+# trick as the window glyph), but the two options need different sources:
+#
+#   pane-border-style reads the pane's own @corral_state. It only ever paints
+#   borders between two inactive panes, so it earns its keep in 3+ pane
+#   layouts.
+#
+#   pane-active-border-style reads @corral_win_state -- the window rollup --
+#   because in the common two-pane split the ENTIRE divider belongs to the
+#   active pane's border and the inactive style never gets a cell to paint.
+#   The divider going green means "a pane in this window needs you", which in
+#   a two-pane window is as precise as a per-pane border anyway.
+#
+# Only the two act-on-me states are coloured; working and idle keep the theme
+# colours, so a border with queue colour in it always means "look here".
+# Single-pane windows draw no borders at all -- there the window-list glyph
+# and the strip are the messengers.
 set -g pane-border-style '#{?#{==:#{@corral_state},done},fg=#22da6e,#{?#{==:#{@corral_state},blocked},fg=#ef5350,fg=#687686}}'
-set -g pane-active-border-style "fg=#82aaff"
+set -g pane-active-border-style '#{?#{==:#{@corral_win_state},done},fg=#22da6e,#{?#{==:#{@corral_win_state},blocked},fg=#ef5350,fg=#82aaff}}'
 
 set -g message-style "bg=#1d3b53,fg=#d6deeb"
 set -g message-command-style "bg=#1d3b53,fg=#d6deeb"
