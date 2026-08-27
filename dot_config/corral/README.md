@@ -140,11 +140,15 @@ runs `corral refresh`.
 
 ## The rollup
 
-One segment on the right of the status bar, for every agent on the machine:
+One segment on the status bar — leftmost on the right side, before CPU/RAM —
+for every agent on the machine:
 
-    ▲ connectors:2.1   ✓ tech-survey:0.0   ●3 ⚠1
-    └────────────────┘ └─────────────────┘ └────┘
-      filled blocks: the work queue         flat and dim: ambient
+    ✓0   ▲1   ●2  ■6
+    └──────┘  └─────┘
+     queue     ambient (■ is the total: every agent pane, idle included)
+
+A fixed strip, always visible, zeros and all. `⚠n` (stale) joins the ambient
+side only when non-zero.
 
 Server-wide, not per-window, because the point of it is that you do not have to
 be in the right window — or the right session — to know an agent wants you. It
@@ -153,35 +157,42 @@ because what you act on is "something is blocked", not "a codex is blocked".
 
 Two kinds of information live here, and they are not drawn alike.
 
-**The work queue — `▲ blocked` and `✓ done` — is what you act on.** Blocked is an
+**The work queue — `✓ done` and `▲ blocked` — is what you act on.** Blocked is an
 agent stalled on you. Done is a turn that finished and has not been read: it
 clears on `pane-focus-in`, so the count is a genuine unread queue rather than a
-snapshot. These get filled blocks — dark text on solid colour. A block is loud
-in a way a coloured glyph on the bar background simply is not, and that
-difference is the whole point of the segment.
+snapshot. At zero these sit dim like everything else; the moment they count
+something they become filled blocks — dark text on solid colour. A block is
+loud in a way a coloured glyph on the bar background simply is not, and that
+flip from dim zero to filled block is what the strip wants you to notice.
 
-**The ambient counts — `● working` and `⚠ stale` — answer "is anything running",
-not "what should I do next".** They stay flat and dim so they cannot compete
-with the queue.
+**The ambient counts — `● working`, `■ total`, and `⚠ stale` — answer "is
+anything running", not "what should I do next".** They stay flat so they cannot
+compete with the queue; `●` brightens a step when non-zero, `■` is dim at any
+value.
 
 Three things it deliberately does.
 
-**Names the target when one or two things are waiting.** A count tells you
-something needs you; a target tells you where to go, and at that size it fits.
-Past `CORRAL_ROLLUP_NAMED_MAX` (2) it falls back to `▲1 ✓2` and `prefix + a`
-answers "where" instead.
+**Keeps a fixed shape.** Always `✓ ▲ ● ■`, in that order, all four visible even
+at zero. An earlier design showed nothing at all when nothing needed you, and
+named the waiting target instead of counting when one or two things waited —
+both dropped: a segment that is sometimes absent and sometimes a different
+shape cannot be tracked at a glance, and the change you would have missed is
+exactly the one it exists to show. Change is the signal now — a slot ticking
+0 → 1 — and "where" is the picker's job (`prefix + a`).
 
-**Shows no idle count**, and with nothing in flight the segment renders as
-nothing at all — separator included. Idle is the resting state of every pane
-that is not doing anything, so showing it would put a number on the bar that is
-almost always the largest one there and never means "look at me". A bar that is
-only ever non-empty when something needs you is one you can actually read.
+**Counts idle in one place only.** `■` is every agent pane on the server, idle
+included — "how many agents do I have open", not "what needs me". Idle appears
+nowhere else: it is the resting state of every pane that is not doing anything,
+so any per-state idle count would be the largest and least meaningful number on
+the bar.
 
 **Splits stale out of working.** A pane whose agent was killed keeps its last
 state, and folding those into `●` is how an indicator earns a permanent phantom
 "1" that trains you to ignore it. `⚠` is a different action anyway: not "wait",
 but "go look at that pane". It stays on the ambient side, though — nothing is
-waiting on you — just louder than working.
+waiting on you — just louder than working. It is also the one slot that appears
+only when non-zero: it is an anomaly flag, not a routine count, and a permanent
+`⚠0` would wear out the one glyph that must always mean "go look".
 
 ### Blocked is never stale
 

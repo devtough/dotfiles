@@ -208,12 +208,14 @@ set -g status-left "#[bg=#82aaff,fg=#011627,bold] #S #[bg=#011627,fg=#82aaff]"
 # No kubectl or rpk on this machine, so the K8/RPK segments would just render
 # "no kubectl"/blank every status-interval. Add them back if those land here.
 set -g status-right "\
+#{@corral_rollup} \
 #[fg=#687686]│ \
 #[fg=#c5e478]CPU #(~/.config/tmux/scripts/cpu.sh) \
 #[fg=#687686]│ \
 #[fg=#21c7a8]RAM #(~/.config/tmux/scripts/ram.sh) "
 {{ else -}}
 set -g status-right "\
+#{@corral_rollup} \
 #[fg=#687686]│ \
 #[fg=#c5e478]CPU #(~/.config/tmux/scripts/cpu.sh) \
 #[fg=#687686]│ \
@@ -404,19 +406,22 @@ set-hook -g pane-exited 'run-shell -b "{{ .chezmoi.homeDir }}/.local/bin/corral 
 # panes, not agents by name: claude and codex land in the same buckets, because
 # what you act on is "something is blocked", not "a codex is blocked".
 #
-#   ▲n  blocked, wants input      ●n  working
-#   ✓n  done and not looked at    ⚠n  stale: claims to be working, stopped
+#   ✓n  done and not looked at    ●n  working
+#   ▲n  blocked, wants input      ■n  every agent pane, idle included
+#                                 ⚠n  stale: claims to be working, stopped
 #                                     reporting -- killed, or wedged
 #
-# Idle is not shown, and the segment renders as nothing at all when no agent
-# needs you. The conditional below is what makes that true down to the
-# separator: an empty rollup must not leave a dangling "│" behind.
+# Always visible, zeros and all -- a fixed strip you can track, where a slot
+# going 0 -> 1 is the signal. ⚠ alone appears only when non-zero.
 #
 # This is a plain format, not a #() job. Reading a tmux option costs no process
 # on redraw and updates the instant the option is written, for every attached
 # client at once; corral-hook writes it on the exact transition, so the bar
 # changes as the agent changes rather than up to status-interval later.
-set -ag status-right "#{?@corral_rollup,#[fg=#687686]│ #{@corral_rollup} ,}"
+# The strip itself sits in the theme block's status-right, leftmost — before
+# CPU/RAM — because it is the one segment whose *changes* matter; see the
+# rollup_line comment in `corral` for why it is always visible, zeros and all.
+# Nothing to set here: #{@corral_rollup} is already part of that format.
 
 # ...and the half that push cannot do. An agent that is killed mid-turn stops
 # sending events rather than sending a last one, and codex exposes only

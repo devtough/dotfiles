@@ -449,57 +449,47 @@ cmd_list() {
 #   The ambient counts — working, and stale — answer "is anything running", not
 #   "what should I do next". They stay flat and dim so they cannot compete.
 #
-# Idle is deliberately absent. It is the resting state of every pane that is not
-# doing anything, so it is almost always the largest number on the bar and it
-# never means "look at me". A segment that renders empty when nothing needs you
-# is the whole design, and one that always shows a number is one you stop
-# reading.
+# The strip is fixed: ✓ done, ▲ blocked, ● working, ■ total, always in that
+# order and always all four visible, zeros included. An earlier design showed
+# nothing at all when nothing needed you, and named the target instead of
+# counting when one or two things waited — both dropped on request: a segment
+# that is sometimes absent and sometimes a different shape cannot be tracked at
+# a glance, and a fixed strip can. Change is the signal now: a slot going 0 → 1
+# is what catches the eye, so zeros stay dim while a non-zero queue slot turns
+# into a filled block. "Where" is the picker's job (prefix + a).
+#
+# ■ is the one slot that counts idle: it is the total number of agent panes on
+# the server, so it answers "how many agents do I have open" rather than "what
+# needs me". It stays dim at any value.
 #
 # Stale is split out of working rather than counted with it. A pane that claims
 # to be working with no event for CORRAL_STALE_SECS is a pane whose agent was
 # killed or is wedged, and folding those into the working count is how an
-# indicator earns a permanent phantom "1" that trains you to ignore it. It is
-# not queue work either — nothing is waiting on you — so it stays on the ambient
-# side, just louder than working.
-#
-# When one or two things are waiting, they are named rather than counted: a
-# count tells you something needs you, a target tells you where to go, and at
-# that size it fits. Past two the names would be wider than the rest of the bar
-# put together, so it falls back to counts and the picker (prefix + a) answers
-# "where" instead.
+# indicator earns a permanent phantom "1" that trains you to ignore it. ⚠ is
+# also the one glyph that appears only when non-zero: it is an anomaly flag,
+# not a routine count, and a permanent ⚠0 would wear out the one glyph that
+# must always mean "go look".
 # ---------------------------------------------------------------------------
-: "${CORRAL_ROLLUP_NAMED_MAX:=2}"
 
 rollup_line() {
-	inventory | jq -r --argjson named_max "$CORRAL_ROLLUP_NAMED_MAX" '
+	inventory | jq -r '
 		# A filled block: dark text on a solid colour, closed with a reset so
 		# the next thing on the bar is not wearing this background.
 		def badge($bg; $text): "#[bg=" + $bg + ",fg=#011627,bold] " + $text + " #[default]";
 		def dim($fg; $text): "#[fg=" + $fg + "]" + $text;
 
 		[.[] | select(.agent != null)] as $a
-		# Inventory is already sorted loudest-first, so blocked names come out
-		# ahead of done ones without sorting again here.
-		| [$a[] | select(.state == "blocked" or .state == "done")] as $queue
-		| ([$queue[] | select(.state == "blocked")] | length) as $blocked
-		| ([$queue[] | select(.state == "done")] | length) as $done
+		| ([$a[] | select(.state == "blocked")] | length) as $blocked
+		| ([$a[] | select(.state == "done")] | length) as $done
 		| ([$a[] | select(.state == "working" and (.stale | not))] | length) as $working
 		| ([$a[] | select(.stale)] | length) as $stale
 
-		| (if ($queue | length) == 0 then []
-		   elif ($queue | length) <= $named_max then
-			[$queue[]
-			 | if .state == "blocked" then badge("#ef5350"; "▲ " + .target)
-			   else badge("#22da6e"; "✓ " + .target) end]
-		   else
-			[(if $blocked > 0 then badge("#ef5350"; "▲\($blocked)") else empty end),
-			 (if $done    > 0 then badge("#22da6e"; "✓\($done)")    else empty end)]
-		   end) as $queue_out
-
-		| ($queue_out
-		   + [(if $working > 0 then dim("#687686"; "●\($working)") else empty end),
-		      (if $stale   > 0 then dim("#c792ea"; "⚠\($stale)")   else empty end)])
-		| if length == 0 then "" else join(" ") + "#[default]" end'
+		| [(if $done    > 0 then badge("#22da6e"; "✓\($done)")    else dim("#687686"; "✓0") end),
+		   (if $blocked > 0 then badge("#ef5350"; "▲\($blocked)") else dim("#687686"; "▲0") end),
+		   (if $working > 0 then dim("#d6deeb"; "●\($working)")   else dim("#687686"; "●0") end),
+		   (if $stale   > 0 then dim("#c792ea"; "⚠\($stale)")     else empty end),
+		   dim("#687686"; "■\($a | length)")]
+		| join(" ") + "#[default]"'
 }
 
 cmd_status() {
