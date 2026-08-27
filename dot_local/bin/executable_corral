@@ -690,18 +690,23 @@ cmd_refresh() {
 	cmd_gc
 	# A done clears only once you engage with the pane: focus it, or type
 	# while already sitting in it. pane-focus-in covers the first; this sweep
-	# covers the second, which no hook fires for -- the pane is focused and
-	# the client shows fresh input, so the badge has been read. Merely having
-	# the pane on screen (cursor in a sibling pane) keeps the badge, on
-	# purpose: that is exactly the finish that is easiest to miss.
-	local focused sess now_s last
-	now_s=$(date +%s)
-	while IFS=$'\t' read -r pane state focused sess; do
+	# covers the second, which no hook fires for. The test is any client
+	# input NEWER than the moment the pane went done, while the pane is
+	# focused -- not input within some freshness window: the sweep only looks
+	# every CORRAL_TICK_SECS, and a window shorter than that let a single
+	# keypress age out between sweeps and the badge stick forever. (Typing
+	# done elsewhere and then focusing is not a false positive: the focus
+	# change itself cleared it.) Merely having the pane on screen with the
+	# cursor in a sibling keeps the badge, on purpose: that is exactly the
+	# finish easiest to miss.
+	local focused since sess last
+	while IFS=$'\t' read -r pane state focused since sess; do
 		[[ $state == done && $focused == 1 ]] || continue
+		[[ $since =~ ^[0-9]+$ ]] || continue
 		last=$(tmux list-clients -t "$sess" -F '#{client_activity}' 2>/dev/null | sort -rn | head -1)
 		[[ $last =~ ^[0-9]+$ ]] || continue
-		(( now_s - last <= CORRAL_ENGAGED_SECS )) && cmd_seen "$pane"
-	done < <(tmux list-panes -a -F $'#{pane_id}\t#{@corral_state}\t#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}\t#{session_id}' 2>/dev/null)
+		(( last >= since )) && cmd_seen "$pane"
+	done < <(tmux list-panes -a -F $'#{pane_id}\t#{@corral_state}\t#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}\t#{@corral_since}\t#{session_id}' 2>/dev/null)
 	# Unconditionally, not only when a pane changed: staleness is a function of
 	# elapsed time, so a rollup can go out of date with nothing having happened.
 	refresh_rollup

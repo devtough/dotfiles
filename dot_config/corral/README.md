@@ -65,9 +65,10 @@ that is exactly the finish that is easiest to miss. Three things count:
 focusing the pane (`pane-focus-in`); the turn finishing under your hands (the
 hook writes idle instead of done when the pane is focused *and* the client has
 seen input within `CORRAL_ENGAGED_SECS`); and typing while already sitting in
-the pane, which no hook fires for — the refresh sweep spots the focused pane
-plus fresh client input on the tick cadence, so that clear can lag up to
-`CORRAL_TICK_SECS`. Focused but idle at the keyboard keeps the badge: a finish
+the pane, which no hook fires for — the refresh sweep clears a focused done
+whose client has input *newer than the badge* (any keystroke after the finish
+counts, however long you sat idle first), on the tick cadence, so that clear
+can lag up to `CORRAL_TICK_SECS`. Focused but idle at the keyboard keeps the badge: a finish
 while you were away is still news when you come back.
 
 A `~` after the state means corral inferred it from the pane rather than

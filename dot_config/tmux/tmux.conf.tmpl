@@ -307,6 +307,16 @@ bind S display-message "naming session..." \; run-shell -b "~/.local/bin/tmux-na
 set -g pane-border-style '#{?#{==:#{@corral_state},done},fg=#22da6e,#{?#{==:#{@corral_state},blocked},fg=#ef5350,fg=#687686}}'
 set -g pane-active-border-style "fg=#82aaff"
 
+# The surface a pane owns even in a two-pane split: its own background.
+# window-style expands per pane like the border style, so a pane holding an
+# unread done gets a faint green wash and a blocked one a faint red -- deep
+# enough to register from the corner of an eye, shallow enough not to fight
+# the text. The active pane is exempt (window-active-style pins it to
+# default): what it wants from you is already under your cursor, and a tint
+# under the line you are typing would be noise.
+set -g window-style '#{?#{==:#{@corral_state},done},bg=#0e2a1e,#{?#{==:#{@corral_state},blocked},bg=#33161c,default}}'
+set -g window-active-style default
+
 set -g message-style "bg=#1d3b53,fg=#d6deeb"
 set -g message-command-style "bg=#1d3b53,fg=#d6deeb"
 
@@ -477,11 +487,11 @@ bind -n MouseDown1Status if-shell -F '#{&&:#{==:#{mouse_status_range},corral},#{
 }
 
 {{ if eq .chezmoi.os "darwin" -}}
-# --- whichkey prototype ------------------------------------------------------
-# C-a opens a menu of every binding instead of arming a prefix; whichkey.conf
-# has the full story and the revert path. Sourced after every bind above so
-# its `set -g prefix None` wins; the prefix-table binds above are dormant but
-# kept -- they are the revert path, not dead code.
+# --- whichkey ----------------------------------------------------------------
+# The prefix binds above stay the real bindings; whichkey.conf adds a menu of
+# all of them on `prefix Any` -- it opens when a chord's second key is not
+# bound (mistype and the board appears) and on C-a C-a on demand. The file
+# explains why the menu rides on the prefix instead of replacing it.
 source-file ~/.config/tmux/whichkey.conf
 
 {{ end -}}
