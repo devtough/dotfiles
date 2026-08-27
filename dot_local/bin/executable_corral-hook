@@ -173,20 +173,33 @@ esac
 # from an agent that was killed mid-tool-call, and readers would flag every real
 # 40-minute turn as stale. It is refreshed at most once a minute so a chatty turn
 # still costs one tmux round trip per event, not two.
-# The fourth field is "is this pane on screen right now": its session has a
-# client attached, its window is that session's current one, and it is not
-# hidden behind a zoomed sibling. tmux computes it inside the same round trip.
-prev=$(tmux display-message -p -t "$pane" '#{@corral_state}|#{@corral_seen_at}|#{@corral_session}|#{&&:#{session_attached},#{&&:#{window_active},#{?#{window_zoomed_flag},#{pane_active},1}}}' 2>/dev/null) || exit 0
+# Two extra fields ride the same round trip: the pane's session id, and
+# whether this pane is the focused one -- the active pane of the current
+# window of an attached session. On-screen-but-not-focused (a sibling pane
+# holds the cursor) deliberately does not count.
+prev=$(tmux display-message -p -t "$pane" '#{@corral_state}|#{@corral_seen_at}|#{@corral_session}|#{session_id}|#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}' 2>/dev/null) || exit 0
 now=$(date +%s)
-vis=${prev##*|}
+focused=${prev##*|}
+prev=${prev%|*}
+sess=${prev##*|}
 prev=${prev%|*}
 
-# A done you can watch happen is not unread. "Done" exists to be the badge for
-# a turn that finished where you were not looking; when the pane is on screen
-# as the turn ends, the pane itself is the notification, so the state goes
-# straight to idle and the ✓ never counts it. A finish anywhere else keeps
-# done, and pane-focus-in (or the refresh sweep) clears it when you arrive.
-[ "$state" = done ] && [ "$vis" = 1 ] && state=idle
+# A finish you are engaged with is not unread. "Done" exists to badge a turn
+# that finished without you: it shows, and stays, until you focus that pane
+# (pane-focus-in) or type while already in it (the refresh sweep). The one
+# case that never earns a badge is finishing under your hands -- the pane is
+# focused AND the client has seen input in the last CORRAL_ENGAGED_SECS, so
+# you are demonstrably there. Focused-but-idle keeps the badge: a finish
+# while you were away from the keyboard is still news when you come back.
+# The extra fork only happens on that focused-done path, not per event.
+if [ "$state" = done ] && [ "$focused" = 1 ]; then
+	engaged=0
+	for t in $(tmux list-clients -t "$sess" -F '#{client_activity}' 2>/dev/null); do
+		case $t in *[!0-9]*) continue ;; esac
+		[ $((now - t)) -le "${CORRAL_ENGAGED_SECS:-30}" ] && engaged=1
+	done
+	[ "$engaged" = 1 ] && state=idle
+fi
 
 # Same round trip, third field: has this pane got an identity yet? If not, the
 # event in hand is carrying one, and a pane with no session id is a pane that

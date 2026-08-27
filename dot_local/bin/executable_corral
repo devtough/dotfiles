@@ -688,15 +688,20 @@ cmd_refresh() {
 	# Agents that cannot report for themselves get read off the pane here.
 	cmd_scan
 	cmd_gc
-	# A done you can see is a done you have read. The hook already refuses to
-	# set done on a pane that is on screen, and pane-focus-in clears it when
-	# you land in the pane itself -- but switching into the window onto a
-	# *sibling* pane, or attaching the session, puts a done on screen with no
-	# hook firing for it. The sweep catches those on the tick cadence.
-	local vis
-	while IFS=$'\t' read -r pane state vis; do
-		[[ $state == done && $vis == 1 ]] && cmd_seen "$pane"
-	done < <(tmux list-panes -a -F $'#{pane_id}\t#{@corral_state}\t#{&&:#{session_attached},#{&&:#{window_active},#{?#{window_zoomed_flag},#{pane_active},1}}}' 2>/dev/null)
+	# A done clears only once you engage with the pane: focus it, or type
+	# while already sitting in it. pane-focus-in covers the first; this sweep
+	# covers the second, which no hook fires for -- the pane is focused and
+	# the client shows fresh input, so the badge has been read. Merely having
+	# the pane on screen (cursor in a sibling pane) keeps the badge, on
+	# purpose: that is exactly the finish that is easiest to miss.
+	local focused sess now_s last
+	now_s=$(date +%s)
+	while IFS=$'\t' read -r pane state focused sess; do
+		[[ $state == done && $focused == 1 ]] || continue
+		last=$(tmux list-clients -t "$sess" -F '#{client_activity}' 2>/dev/null | sort -rn | head -1)
+		[[ $last =~ ^[0-9]+$ ]] || continue
+		(( now_s - last <= CORRAL_ENGAGED_SECS )) && cmd_seen "$pane"
+	done < <(tmux list-panes -a -F $'#{pane_id}\t#{@corral_state}\t#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}\t#{session_id}' 2>/dev/null)
 	# Unconditionally, not only when a pane changed: staleness is a function of
 	# elapsed time, so a rollup can go out of date with nothing having happened.
 	refresh_rollup

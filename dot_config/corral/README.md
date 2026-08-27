@@ -59,11 +59,16 @@ Everywhere a state is drawn — the strip, the window list, the picker — it we
 the same glyph and the same colour: green ✓, red ▲, bright ●, grey ■, purple ⚠
 (picker rows show a stale pane as ⚠ directly).
 
-"Seen" is any of three things: focusing the pane (`pane-focus-in`), the pane
-being on screen at the moment the turn ends (the hook writes idle instead of
-done — a finish you watched happen was never unread), or the refresh sweep
-noticing a done pane is visible, which catches the cases with no hook to fire:
-switching into the window onto a sibling pane, or attaching the session.
+"Seen" means engaging with the pane, not merely having it on screen — a finish
+in a sibling pane while your cursor is elsewhere keeps its badge, on purpose:
+that is exactly the finish that is easiest to miss. Three things count:
+focusing the pane (`pane-focus-in`); the turn finishing under your hands (the
+hook writes idle instead of done when the pane is focused *and* the client has
+seen input within `CORRAL_ENGAGED_SECS`); and typing while already sitting in
+the pane, which no hook fires for — the refresh sweep spots the focused pane
+plus fresh client input on the tick cadence, so that clear can lag up to
+`CORRAL_TICK_SECS`. Focused but idle at the keyboard keeps the badge: a finish
+while you were away is still news when you come back.
 
 A `~` after the state means corral inferred it from the pane rather than
 hearing it from the agent (see below); a `!` means the state is stale, which
