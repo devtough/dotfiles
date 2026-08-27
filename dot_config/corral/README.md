@@ -68,8 +68,9 @@ its badge until you act. Two things clear it: focusing the pane
 (`pane-focus-in`), and typing while already sitting in it, which no hook fires
 for — the refresh sweep clears a focused done whose client has input *newer
 than the badge* (any keystroke after the finish counts, however long you sat
-idle first), on the tick cadence, so that clear can lag up to
-`CORRAL_TICK_SECS`. Answering the agent clears it fastest of all: the next
+idle first). The sweep runs on every tick invocation, unthrottled -- it is
+one tmux call -- so the clear lands within a status-interval of the
+keypress rather than waiting out `CORRAL_TICK_SECS`. Answering the agent clears it fastest of all: the next
 prompt transitions the pane to working by itself.
 
 A `~` after the state means corral inferred it from the pane rather than

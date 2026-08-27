@@ -556,6 +556,7 @@ cmd_tick() {
 	now=$(date +%s)
 	[[ -r $stamp ]] && { read -r last <"$stamp" 2>/dev/null || last=0; }
 	[[ $last =~ ^[0-9]+$ ]] || last=0
+	sweep_seen_dones >/dev/null 2>&1 || true
 	((now - last < CORRAL_TICK_SECS)) && return 0
 	printf '%s\n' "$now" >"$stamp" 2>/dev/null || true
 	cmd_refresh >/dev/null 2>&1 || true
@@ -666,6 +667,32 @@ cmd_scan() {
 # ---------------------------------------------------------------------------
 # refresh / gc: reconcile what the hooks could not tell us
 # ---------------------------------------------------------------------------
+# A done clears only once you engage with the pane: focus it, or type while
+# already sitting in it. pane-focus-in covers the first; this sweep covers the
+# second, which no hook fires for. The test is any client input NEWER than the
+# moment the pane went done, while the pane is focused -- not input within
+# some freshness window, which once let a single keypress age out between
+# sweeps and the badge stick forever. (Typing elsewhere and then focusing is
+# not a false positive: the focus change itself cleared it.) Merely having
+# the pane on screen with the cursor in a sibling keeps the badge, on
+# purpose: that is exactly the finish easiest to miss.
+#
+# Cheap by construction -- one list-panes, and a list-clients only when a
+# focused done actually exists -- so tick runs it every status-interval,
+# unthrottled: the clear should land a beat after the keypress, not up to
+# CORRAL_TICK_SECS later.
+sweep_seen_dones() {
+	local pane state focused since sess last
+	while IFS=$'\t' read -r pane state focused since sess; do
+		[[ $state == done && $focused == 1 ]] || continue
+		[[ $since =~ ^[0-9]+$ ]] || continue
+		last=$(tmux list-clients -t "$sess" -F '#{client_activity}' 2>/dev/null | sort -rn | head -1)
+		[[ $last =~ ^[0-9]+$ ]] || continue
+		(( last >= since )) && cmd_seen "$pane"
+	done < <(tmux list-panes -a -F $'#{pane_id}\t#{@corral_state}\t#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}\t#{@corral_since}\t#{session_id}' 2>/dev/null)
+	return 0
+}
+
 cmd_refresh() {
 	have_tmux || return 0
 	local pane cmd state agent
@@ -688,25 +715,7 @@ cmd_refresh() {
 	# Agents that cannot report for themselves get read off the pane here.
 	cmd_scan
 	cmd_gc
-	# A done clears only once you engage with the pane: focus it, or type
-	# while already sitting in it. pane-focus-in covers the first; this sweep
-	# covers the second, which no hook fires for. The test is any client
-	# input NEWER than the moment the pane went done, while the pane is
-	# focused -- not input within some freshness window: the sweep only looks
-	# every CORRAL_TICK_SECS, and a window shorter than that let a single
-	# keypress age out between sweeps and the badge stick forever. (Typing
-	# done elsewhere and then focusing is not a false positive: the focus
-	# change itself cleared it.) Merely having the pane on screen with the
-	# cursor in a sibling keeps the badge, on purpose: that is exactly the
-	# finish easiest to miss.
-	local focused since sess last
-	while IFS=$'\t' read -r pane state focused since sess; do
-		[[ $state == done && $focused == 1 ]] || continue
-		[[ $since =~ ^[0-9]+$ ]] || continue
-		last=$(tmux list-clients -t "$sess" -F '#{client_activity}' 2>/dev/null | sort -rn | head -1)
-		[[ $last =~ ^[0-9]+$ ]] || continue
-		(( last >= since )) && cmd_seen "$pane"
-	done < <(tmux list-panes -a -F $'#{pane_id}\t#{@corral_state}\t#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}\t#{@corral_since}\t#{session_id}' 2>/dev/null)
+	sweep_seen_dones
 	# Unconditionally, not only when a pane changed: staleness is a function of
 	# elapsed time, so a rollup can go out of date with nothing having happened.
 	refresh_rollup
