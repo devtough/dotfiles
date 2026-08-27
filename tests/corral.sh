@@ -97,12 +97,18 @@ fake_agent() {
 	tm new-window -P -F '#{pane_id}' >"$WORLD/.pane"
 	pane=$(<"$WORLD/.pane")
 	tm send-keys -t "$pane" "clear; ${pre:+$pre; }$bin 600" Enter
-	# Wait for the exec to actually take, or the pane still reads as a shell.
+	# Wait for the exec to actually take, or the pane still reads as a shell
+	# and inventory rightly drops it -- which surfaced as one-off count
+	# failures in unrelated tests when a loaded machine blew the old 2s
+	# budget. Wait up to 10s (a ready pane breaks out immediately) and say
+	# so if it still is not there, so the resulting failure names its cause.
 	local _i
-	for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+	for _i in $(seq 100); do
 		[[ $(tm display-message -p -t "$pane" '#{pane_current_command}') == "$name" ]] && break
 		sleep 0.1
 	done
+	[[ $(tm display-message -p -t "$pane" '#{pane_current_command}') == "$name" ]] ||
+		fail "fake_agent: $name never took over $pane"
 	printf '%s\n' "$pane"
 }
 
