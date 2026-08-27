@@ -223,8 +223,15 @@ agent really did die is caught by `corral scan` reading the screen, or by
 
 ### Where, not just what
 
-The rollup tells you something needs you. Two surfaces answer where, and they
-cover different ground:
+The rollup tells you something needs you. Three surfaces answer where, and
+they cover different ground:
+
+    pane borders      pane-border-style is a format over each pane's own
+                      @corral_state: green border for an unread done, red for
+                      blocked, theme grey otherwise. Zero polling, same trick
+                      as the window glyph. Only helps in split windows --
+                      a single pane draws no borders -- and the active pane
+                      keeps the plain active colour.
 
     window list       #{E:@corral_win_glyph} puts the same ▲/✓/● glyph on each
                       window. Pure format, no polling — every state write
