@@ -36,5 +36,10 @@ night-owl
 # Linux-only files - ignore on macOS
 .bashrc
 .bash_profile
+{{ end }}
+
+{{ if eq .profile "rss-mac" }}
+# rss-mac's ghostty (if it has one) is unmanaged; sonbox and omarchy render
+# .config/ghostty/config from dot_config/ghostty/config.tmpl.
 .config/ghostty/
 {{ end }}

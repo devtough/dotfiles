@@ -13,18 +13,20 @@ VAULT=""
 [[ "${1:-}" == "--vault" ]] && VAULT="${2:-}"
 
 # --- Ghostty: built-in theme, just point the config at it --------------------
+# ~/.config/ghostty/config is checked first: ghostty reads the XDG path on
+# macOS too, and it is the chezmoi-rendered one on sonbox (the old
+# "Application Support/.../config.ghostty" was migrated there 2026-08-27).
+# A chezmoi-managed config is left alone -- sonbox is Rose Pine on purpose,
+# and an append here would fight `chezmoi apply` (the herdr lesson).
 ghostty_cfg=""
-# config.ghostty is checked FIRST and is the one in use on sonbox. Ghostty 1.3
-# reads it, verified via `ghostty +show-config` (font-size 15 vs the default
-# 13). The old list only had bare "config", matched nothing, and fell through to
-# creating ~/.config/ghostty/config -- a file that would have competed with the
-# real one instead of theming it.
-for f in "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty" \
+for f in "$HOME/.config/ghostty/config" \
          "$HOME/Library/Application Support/com.mitchellh.ghostty/config" \
-         "$HOME/.config/ghostty/config"; do
+         "$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"; do
   [[ -f $f ]] && { ghostty_cfg=$f; break; }
 done
-if [[ -n $ghostty_cfg ]]; then
+if [[ -n $ghostty_cfg ]] && chezmoi managed --path-style=absolute 2>/dev/null | grep -qFx "$ghostty_cfg"; then
+  echo "ghostty: $ghostty_cfg is chezmoi-managed — edit its source, not this script"
+elif [[ -n $ghostty_cfg ]]; then
   if grep -qE '^\s*theme\s*=' "$ghostty_cfg"; then
     sed -i '' -E 's/^\s*theme\s*=.*/theme = Night Owl/' "$ghostty_cfg"
     echo "ghostty: theme line updated in $ghostty_cfg"

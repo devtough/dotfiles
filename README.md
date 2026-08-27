@@ -58,12 +58,13 @@ pip install pre-commit    # or via pip
 | Config | rss-mac | sonbox | omarchy |
 |--------|---------|--------|---------|
 | tmux | Night Owl, `C-a` prefix, vim-tmux-navigator, fzf popups | same, minus the K8/RPK status segments | omarchy palette, `wl-copy` yank |
+| ghostty | unmanaged | Rose Pine, `font-size = 15`, XDG path | Night Owl-era base + omarchy palette via `config-file` include |
 | herdr | `C-a` prefix, `theme = terminal` + Rose Pine foam accent, git-sync/agent-ctx/tab-numbers plugins | same | same (accent is hardcoded, not the omarchy palette) |
 | shell | zsh — oh-my-zsh + powerlevel10k | zsh — minimal, no framework, fzf `^r` | bash — omarchy defaults |
 | git | `gh` at the nix path | `gh` at `/opt/homebrew/bin` | `gh` at `/usr/bin` |
 | nvim | LazyVim (Dec 2025 state) | LazyVim v16, snacks picker + explorer | LazyVim |
 | `lazy-lock.json` | *not deployed* | tracked | *not deployed* |
-| ghostty | — | *not deployed* (config is Linux/hyprland-specific) | ✓ |
+| ghostty | *not deployed* | ✓ (`config.tmpl` branches on `.profile`) | ✓ |
 
 External plugins managed via `.chezmoiexternal.toml.tmpl`. The oh-my-zsh /
 powerlevel10k externals are pulled on `rss-mac` only; `tpm` is pulled everywhere.
@@ -110,16 +111,16 @@ it is now `dot_config/herdr/config.toml`. Two consequences:
   matching this machine's ghostty. It will look wrong if herdr ever runs on
   omarchy.
 
-  **sonbox's ghostty is Rose Pine, not Night Owl**, and that was deliberate:
-  the config carried a comment pairing it with herdr's old `name = "rose-pine"`.
-  Only tmux on this machine is Night Owl. That config lives at
-  `~/Library/Application Support/com.mitchellh.ghostty/**config.ghostty**` — note
-  the extension. `night-owl/install.sh` looked for a bare `config` and so had
-  never themed ghostty here; its candidate list now checks `config.ghostty`
-  first. The file is still untracked by chezmoi, because
-  `.chezmoiignore.tmpl` deploys `.config/ghostty/` on omarchy only and this is a
-  different path on a different machine — worth revisiting if sonbox's terminal
-  config is ever worth version-controlling.
+  **sonbox's ghostty is Rose Pine, not Night Owl**, and that is deliberate —
+  only tmux on this machine is Night Owl. The config is chezmoi-managed as of
+  2026-08-27: `dot_config/ghostty/config.tmpl` branches on `.profile` (sonbox
+  gets theme + font-size, everything else is the omarchy config), and only
+  rss-mac still ignores `.config/ghostty/`. sonbox's old hand-maintained copy
+  at `~/Library/Application Support/com.mitchellh.ghostty/config.ghostty` was
+  deleted in the move — ghostty reads the XDG path on macOS too, and keeping
+  both would have had them competing. `night-owl/install.sh` refuses to touch
+  any ghostty config that `chezmoi managed` claims, for the same reason it no
+  longer appends to herdr's.
 
 Herdr plugins live in `dot_config/herdr/plugins/`. `plugins.json` next to them is
 a generated registry — herdr rescans the plugin directories at **server start**,

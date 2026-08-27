@@ -1,3 +1,16 @@
+{{ if eq .profile "sonbox" -}}
+# sonbox: theme + font only, ghostty defaults for the rest. Rose Pine on
+# purpose -- only tmux on this machine is Night Owl -- and night-owl/install.sh
+# knows to leave chezmoi-managed ghostty configs alone.
+#
+# herdr does not need to change alongside this: its [theme] is
+# name = "terminal", so it renders through the ANSI palette and follows
+# whatever theme is set here. Only herdr's [theme.custom] accent is set by
+# hand, since ANSI has no slot for it -- currently Rose Pine foam (#9ccfd8).
+theme = Rose Pine
+
+font-size = 15
+{{ else -}}
 # Dynamic theme colors
 config-file = ?"~/.config/omarchy/current/theme/ghostty.conf"
 
@@ -39,3 +52,4 @@ keybind = shift+enter=text:\x1b\r
 
 # Fix general slowness on hyprland (https://github.com/ghostty-org/ghostty/discussions/3224)
 async-backend = epoll
+{{ end -}}
