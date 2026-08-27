@@ -226,19 +226,17 @@ agent really did die is caught by `corral scan` reading the screen, or by
 The rollup tells you something needs you. Three surfaces answer where, and
 they cover different ground:
 
-    pane borders      three formats, zero polling. pane-border-style reads
-                      each pane's own @corral_state (green unread done, red
-                      blocked, theme grey otherwise) but only ever paints
-                      borders between two inactive panes; the two-pane
-                      divider belongs entirely to the active border, so
-                      pane-active-border-style reads @corral_win_state and a
-                      coloured divider means "a pane in this window". Which
-                      pane is the border-status line's job: in split windows
-                      every pane owns a title line -- index, corral glyph in
-                      the strip colours, command -- one terminal row per
-                      window, toggled off automatically when a window is a
-                      single full-screen pane (which also draws no borders;
-                      there the window glyph and the strip carry it).
+    pane borders      pane-border-style is a format over each pane's own
+                      @corral_state: green unread done, red blocked, theme
+                      grey otherwise. Zero polling, but honest limits: it
+                      only paints borders between two inactive panes, so it
+                      shows nothing in a two-pane split (the divider belongs
+                      entirely to the active border, kept plain blue --
+                      colouring it from the window rollup was tried and read
+                      as the wrong pane; border-status title lines were
+                      tried and cost every split window a permanent row).
+                      In two-pane splits and single panes the strip and the
+                      window glyph carry it.
 
     window list       #{E:@corral_win_glyph} puts the same ▲/✓/● glyph on each
                       window. Pure format, no polling — every state write
