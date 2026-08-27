@@ -3,10 +3,11 @@
 What is running in every tmux pane on this machine, and how the agents get back
 after a reboot.
 
-`corral` is the tracking layer only. It collects state and answers questions
-(`corral list --json`); it deliberately draws nothing. A status-bar glyph, an
-fzf picker and a live sidebar are three renderers over the same JSON, and
-tmux.conf carries a ready-to-uncomment line for each.
+`corral` is the tracking layer. It collects state and answers questions
+(`corral list --json`), and it draws exactly one thing: the rollup, a single
+status-bar segment for every agent on the machine. Everything else — a
+per-window glyph, an fzf picker, a live sidebar — is a renderer over the same
+JSON, and tmux.conf carries a ready-to-uncomment line for each.
 
 ## The pieces
 
@@ -21,7 +22,7 @@ Wiring lives in three places, all installed already:
     ~/.claude/settings.json   7 hook events -> corral-hook claude <Event>
     ~/.codex/hooks.json       SessionStart -> corral-hook codex SessionStart
     ~/.config/tmux/tmux.conf   resurrect save/restore hooks, pane-focus-in,
-                               pane-exited
+                               pane-exited, and the rollup segment
 
 `corral doctor` checks all of it and prints the current inventory.
 
@@ -55,7 +56,8 @@ resurrect's dump describe the same instant. `last` symlinks to the newest.
     ·           no agent, or state unknown
 
 A `~` after the state means corral inferred it from the pane rather than
-hearing it from the agent (see below); a `!` means the state is stale.
+hearing it from the agent (see below); a `!` means the state is stale, which
+only ever applies to `working` (see "Blocked is never stale").
 
 Not every Notification is a blocker. Claude Code fires the same event for "I
 need permission to run X" and for "I have been waiting for your input", and
@@ -64,7 +66,8 @@ nothing else fires until you type. corral classifies on the message text and
 lets the second kind pass through without touching the state.
 
 Ranking is `blocked > done > working > idle`, which is the order `corral list`
-sorts in: the loudest thing is always the top row.
+sorts in: the loudest thing is always the top row, and the order the rollup
+renders its counts in.
 
 Two timestamps, answering different questions. `@corral_since` is when the state
 last changed, and it is what the AGE column shows — "working for 40 minutes".
@@ -135,6 +138,114 @@ provenance in `@corral_source` and in the JSON as `state_source`.
 `corral refresh` runs a scan as part of reconciling, and the `pane-exited` hook
 runs `corral refresh`.
 
+## The rollup
+
+One segment on the right of the status bar, for every agent on the machine:
+
+    ▲ connectors:2.1   ✓ tech-survey:0.0   ●3 ⚠1
+    └────────────────┘ └─────────────────┘ └────┘
+      filled blocks: the work queue         flat and dim: ambient
+
+Server-wide, not per-window, because the point of it is that you do not have to
+be in the right window — or the right session — to know an agent wants you. It
+counts panes, not agents by name: claude and codex land in the same buckets,
+because what you act on is "something is blocked", not "a codex is blocked".
+
+Two kinds of information live here, and they are not drawn alike.
+
+**The work queue — `▲ blocked` and `✓ done` — is what you act on.** Blocked is an
+agent stalled on you. Done is a turn that finished and has not been read: it
+clears on `pane-focus-in`, so the count is a genuine unread queue rather than a
+snapshot. These get filled blocks — dark text on solid colour. A block is loud
+in a way a coloured glyph on the bar background simply is not, and that
+difference is the whole point of the segment.
+
+**The ambient counts — `● working` and `⚠ stale` — answer "is anything running",
+not "what should I do next".** They stay flat and dim so they cannot compete
+with the queue.
+
+Three things it deliberately does.
+
+**Names the target when one or two things are waiting.** A count tells you
+something needs you; a target tells you where to go, and at that size it fits.
+Past `CORRAL_ROLLUP_NAMED_MAX` (2) it falls back to `▲1 ✓2` and `prefix + a`
+answers "where" instead.
+
+**Shows no idle count**, and with nothing in flight the segment renders as
+nothing at all — separator included. Idle is the resting state of every pane
+that is not doing anything, so showing it would put a number on the bar that is
+almost always the largest one there and never means "look at me". A bar that is
+only ever non-empty when something needs you is one you can actually read.
+
+**Splits stale out of working.** A pane whose agent was killed keeps its last
+state, and folding those into `●` is how an indicator earns a permanent phantom
+"1" that trains you to ignore it. `⚠` is a different action anyway: not "wait",
+but "go look at that pane". It stays on the ambient side, though — nothing is
+waiting on you — just louder than working.
+
+### Blocked is never stale
+
+Staleness applies to `working` alone. Being silent is what blocked *is*: the
+agent fired one Notification and has nothing further to send until you answer
+it. Ageing that into "stale" meant the longest-waiting, most urgent pane on the
+machine quietly reclassified itself as probably-dead at the `CORRAL_STALE_SECS`
+mark and dropped out of the queue — exactly backwards. A blocked pane whose
+agent really did die is caught by `corral scan` reading the screen, or by
+`corral refresh` seeing a shell back in the foreground; neither needs a timer.
+
+### Where, not just what
+
+The rollup tells you something needs you. Two surfaces answer where, and they
+cover different ground:
+
+    window list       #{E:@corral_win_glyph} puts the same ▲/✓/● glyph on each
+                      window. Pure format, no polling — every state write
+                      already rolls the loudest pane in a window up into
+                      @corral_win_state. Only covers the session you are in.
+
+    prefix + a        popup picker over `corral list --agents`, which is already
+                      sorted blocked > done > working > idle, so the loudest
+                      pane is under the cursor when it opens. Previews the pane
+                      before you jump. Crosses sessions, which the window list
+                      cannot.
+
+The window glyph has no `⚠`: `@corral_win_state` is written by the hook's fast
+path, which has no clock to age states against. A window reading `●` may be
+stale, and the rollup is where that gets told apart. One occasionally-optimistic
+glyph beats teaching the hot path to do arithmetic on every transition.
+
+### Push, and the tick that corrects it
+
+The segment is a plain `#{@corral_rollup}` format, not a `#(corral status)` job.
+Reading a tmux option costs no process on redraw and updates the instant the
+option is written, for every attached client at once — and `corral-hook` writes
+it on the exact transition, so the bar changes as the agent changes rather than
+up to a `status-interval` later. Every writer of pane state pushes it, through
+the same `refresh_window_state` that rolls state up to the window.
+
+Push alone drifts, and it drifts in exactly the two cases most worth showing. An
+agent killed mid-turn stops sending events rather than sending a last one, and
+codex exposes only `SessionStart`, so it can say who it is but never what it is
+doing. Both are read off the pane by `corral scan` — which nothing ever called
+on a schedule. `pane-exited` did, which is to say only when some *other* pane
+happened to die, so a dead codex pane could sit on the bar claiming to work for
+a day. It did.
+
+The status bar is that schedule:
+
+    set -ag status-right "#(~/.local/bin/corral tick)"
+
+tmux re-runs that every `status-interval` (5s), which is far too often to be
+reading panes, so `corral tick` throttles itself to `CORRAL_TICK_SECS` (30s) and
+returns after one stamp-file read the rest of the time. Past the interval it
+runs the full `corral refresh` — reconcile, scan, gc — and re-derives the rollup
+from the inventory, staleness included. It prints nothing, on purpose: anything
+it printed would be printed *into the status bar*.
+
+So the two halves answer different questions. Push says "this agent just
+changed"; tick says "this agent has stopped saying anything, and that is itself
+the news."
+
 ## One pane, one voice
 
 A Claude Code subagent, a background job, or a nested session runs *inside* the
@@ -201,7 +312,7 @@ be restarted.)
 
 `tests/corral.sh` in the dotfiles repo, no dependencies beyond tmux and jq:
 
-    tests/corral.sh              # ~25s, 46 tests
+    tests/corral.sh              # ~35s, 60 tests
     tests/corral.sh restore      # only tests whose name matches
     KEEP=1 tests/corral.sh       # leave each test's temp world behind
 

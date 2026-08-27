@@ -30,3 +30,13 @@
 
 # Snapshots to keep in ~/.local/state/corral/restore.
 : "${CORRAL_SNAPSHOT_KEEP:=20}"
+
+# How often `corral tick` is allowed to do real work. It is called from a status
+# bar job, which tmux re-runs every status-interval (5s) -- far too often to be
+# reading panes. Below this, tick returns after one stamp-file read.
+#
+# This is the interval at which an agent that died without saying so, and a
+# codex pane that never says anything, get corrected on the status bar. Lower it
+# if the bar feels slow to admit an agent has stopped; the cost is one scan
+# (~150ms for six panes) per interval.
+: "${CORRAL_TICK_SECS:=30}"

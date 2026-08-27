@@ -130,6 +130,11 @@ setup() {
 	export CORRAL_RESTORE_STAGGER=0
 	export CORRAL_RESTORE_TRIES=3
 	export CORRAL_STALE_SECS=1800
+	export CORRAL_TICK_SECS=30
+	# Re-exported per test, not just once: tests share this shell, so a test
+	# that opts into counts_only would otherwise silently change the rendering
+	# for every test after it.
+	export CORRAL_ROLLUP_NAMED_MAX=2
 	export CORRAL_CLAUDE_FLAGS="--test-flag"
 	unset TMUX TMUX_PANE
 
@@ -497,6 +502,225 @@ test_scan_skips_panes_with_no_agent() {
 }
 
 # ===========================================================================
+# rollup / tick: the status bar segment
+# ===========================================================================
+
+# The rollup is a rendered string with tmux colour escapes in it, so these
+# assert on the glyph-and-count pairs rather than the whole line: the colours
+# are a styling decision and would make every one of these a test of the
+# palette.
+
+test_rollup_is_empty_when_nothing_needs_you() {
+	# The whole design of the segment is that it disappears. A bar that always
+	# shows a number is a bar you stop reading, and idle is the resting state
+	# of every pane that is not doing anything.
+	local a b
+	a=$(fake_agent codex); b=$(fake_agent 2.1.238)
+	corral report --pane "$a" --agent codex --state idle
+	corral report --pane "$b" --agent claude --state idle
+	assert_empty "$(corral status)" "idle agents render nothing"
+}
+
+# The rollup renders counts only past CORRAL_ROLLUP_NAMED_MAX; below that it
+# names targets. Tests that mean to assert on counts say so by setting it to 0.
+counts_only() { export CORRAL_ROLLUP_NAMED_MAX=0; }
+
+test_rollup_counts_across_sessions_and_windows() {
+	counts_only
+	# The point of a rollup is that you do not have to be looking at the right
+	# window, or the right session, to know an agent wants you.
+	local a b c
+	a=$(fake_agent codex)
+	b=$(fake_agent 2.1.238)
+	# A fake agent has to be a real process, and fake_agent only opens windows
+	# in the default session -- so build the third one there and move its whole
+	# window across. A bare shell in the new session would not do: a shell in
+	# the foreground is exactly how corral reads "the agent exited", so it would
+	# have been dropped from the count for the right reason and passed this test
+	# for the wrong one.
+	tm new-session -d -s other
+	c=$(fake_agent codex)
+	tm move-window -s "$(tm display-message -p -t "$c" '#{window_id}')" -t other:
+	corral report --pane "$a" --agent codex --state working
+	corral report --pane "$b" --agent claude --state working
+	corral report --pane "$c" --agent codex --state blocked
+	local line; line=$(corral status)
+	assert_contains "$line" "●2" "both working panes counted, in two windows"
+	assert_contains "$line" "▲1" "and a pane in a different session entirely"
+}
+
+test_rollup_merges_the_agents() {
+	counts_only
+	# claude and codex land in the same buckets on purpose: what you act on is
+	# "something is blocked", not "a codex is blocked".
+	local a b
+	a=$(fake_agent codex); b=$(fake_agent 2.1.238)
+	corral report --pane "$a" --agent codex --state blocked
+	corral report --pane "$b" --agent claude --state blocked
+	assert_contains "$(corral status)" "▲2" "one count, both agents"
+}
+
+test_rollup_splits_stale_out_of_working() {
+	counts_only
+	# A pane whose agent was killed keeps its last state, and folding those into
+	# the working count is how the segment earns a permanent phantom "1" that
+	# trains you to ignore it. They get their own glyph because the action is
+	# different: not "wait", but "go look at that pane".
+	local a b now
+	a=$(fake_agent codex); b=$(fake_agent 2.1.238)
+	now=$(date +%s)
+	corral report --pane "$a" --agent codex --state working
+	corral report --pane "$b" --agent claude --state working
+	local line; line=$(corral status)
+	assert_contains "$line" "●2" "both count as working while both are talking"
+	assert_not_contains "$line" "⚠" "and nothing is stale yet"
+	tm set -p -t "$a" @corral_seen_at "$((now - 7200))"
+	line=$(corral status)
+	assert_contains "$line" "●1" "the silent one drops out of working"
+	assert_contains "$line" "⚠1" "and is counted as stale instead"
+}
+
+test_rollup_push_writes_the_tmux_option() {
+	local pane
+	pane=$(fake_agent codex)
+	corral report --pane "$pane" --agent codex --state blocked
+	# report goes through refresh_window_state, which is where the rollup hangs,
+	# so the option is already current without anyone asking for it.
+	assert_contains "$(tm show-option -gqv @corral_rollup)" "▲ $(tm display-message -p -t "$pane" '#{session_name}:#{window_index}.#{pane_index}')" \
+		"a state write pushes the rollup"
+	corral seen "$pane"
+	corral report --pane "$pane" --agent codex --state idle
+	assert_empty "$(tm show-option -gqv @corral_rollup)" \
+		"and clears it again when nothing needs you"
+}
+
+test_rollup_pushed_by_the_hook_on_a_transition() {
+	# The reason the segment is a plain #{@corral_rollup} format and not a #()
+	# job: the hook already knows the instant a state changes, so the bar can be
+	# told rather than left to poll for it.
+	#
+	# The hook has to be driven from %0, because a pane running a real fake
+	# agent has no prompt to type at -- and %0 is a shell, which is precisely
+	# how corral reads "the agent exited", so %0 itself will never appear in a
+	# rollup. So the agent being counted here is a second pane, and what is
+	# under test is the push: the option is unset immediately before, and only
+	# the hook's transition can have put it back.
+	local other
+	other=$(fake_agent codex)
+	corral report --pane "$other" --agent codex --state blocked
+	tm set -gu @corral_rollup
+	in_pane %0 'corral-hook claude UserPromptSubmit </dev/null'
+	local _i line=""
+	for _i in 1 2 3 4 5 6 7 8 9 10; do
+		line=$(tm show-option -gqv @corral_rollup)
+		[[ -n $line ]] && break
+		sleep 0.2
+	done
+	assert_contains "$line" "▲ " "the hook pushes the rollup as it transitions"
+}
+
+test_rollup_names_the_target_when_one_or_two_are_waiting() {
+	# A count says something needs you; a target says where to go.
+	local a b c
+	a=$(fake_agent codex); b=$(fake_agent 2.1.238); c=$(fake_agent gemini)
+	corral report --pane "$a" --agent codex --state blocked
+	local line; line=$(corral status)
+	assert_contains "$line" "▲ $(pq "$a" .target)" "one waiting is named"
+	corral report --pane "$b" --agent claude --state done
+	line=$(corral status)
+	assert_contains "$line" "▲ $(pq "$a" .target)" "two waiting are both named"
+	assert_contains "$line" "✓ $(pq "$b" .target)" "including the finished one"
+	corral report --pane "$c" --agent gemini --state done
+	line=$(corral status)
+	assert_not_contains "$line" ":" "three is too many to name"
+	assert_contains "$line" "▲1" "so it falls back to counts"
+	assert_contains "$line" "✓2" "for both halves of the queue"
+}
+
+test_rollup_draws_the_queue_as_badges_and_the_rest_flat() {
+	# The whole point of the segment: blocked and done are work you act on and
+	# get a filled block, working and stale are ambient and must not compete.
+	local a b now
+	a=$(fake_agent codex); b=$(fake_agent 2.1.238)
+	now=$(date +%s)
+	corral report --pane "$a" --agent codex --state blocked
+	corral report --pane "$b" --agent claude --state working
+	tm set -p -t "$b" @corral_seen_at "$((now - 7200))"
+	local line; line=$(corral status)
+	assert_contains "$line" "#[bg=#ef5350,fg=#011627,bold] ▲" "blocked is a filled block"
+	assert_contains "$line" "#[fg=#c792ea]⚠1" "stale is flat, and not a block"
+	assert_not_contains "$line" "bg=#c792ea" "nothing ambient gets a background"
+}
+
+test_rollup_done_is_a_badge_too() {
+	local pane
+	pane=$(fake_agent 2.1.238)
+	corral report --pane "$pane" --agent claude --state done
+	assert_contains "$(corral status)" "#[bg=#22da6e,fg=#011627,bold] ✓" \
+		"a finished turn is a filled block until you look at it"
+	corral seen "$pane"
+	assert_empty "$(corral status)" "and goes quiet once you have"
+}
+
+test_blocked_never_goes_stale() {
+	# Being silent is what blocked *is*: the agent fired one Notification and has
+	# nothing further to send until you answer. Ageing that into "stale" made the
+	# longest-waiting, most urgent pane on the machine quietly reclassify itself
+	# as probably-dead at the CORRAL_STALE_SECS mark.
+	local pane now
+	pane=$(fake_agent codex)
+	now=$(date +%s)
+	corral report --pane "$pane" --agent codex --state blocked
+	tm set -p -t "$pane" @corral_seen_at "$((now - 99999))"
+	assert_eq false "$(pq "$pane" .stale)" "an agent waiting on you all day is not stale"
+	assert_contains "$(corral status)" "▲ " "and is still the loud thing on the bar"
+}
+
+test_tick_throttles_itself() {
+	# tick is called from a status bar job, which tmux re-runs every
+	# status-interval -- far too often to be reading panes. The stamp is only
+	# written when it actually did the work.
+	local first second third
+	rm -f "$STATE/tick.stamp"
+	corral tick
+	first=$(<"$STATE/tick.stamp")
+	[[ -n $first ]] || fail "first tick should stamp"
+	corral tick
+	second=$(<"$STATE/tick.stamp")
+	assert_eq "$first" "$second" "a tick inside CORRAL_TICK_SECS does no work"
+	printf '%s\n' "$((first - 31))" >"$STATE/tick.stamp"
+	corral tick
+	third=$(<"$STATE/tick.stamp")
+	[[ $third != "$((first - 31))" ]] || fail "a tick past CORRAL_TICK_SECS should work"
+}
+
+test_tick_prints_nothing_into_the_status_bar() {
+	# Whatever this printed would be printed *into the status bar*.
+	local pane
+	pane=$(fake_agent codex 'echo "esc to interrupt"')
+	corral report --pane "$pane" --agent codex --state working
+	rm -f "$STATE/tick.stamp"
+	assert_empty "$(corral tick 2>&1)" "tick is silent even when it changes state"
+}
+
+test_tick_corrects_a_pane_no_hook_will_ever_speak_for() {
+	# The half push cannot do. codex exposes only SessionStart, so a codex pane
+	# has nothing to send when it stops working; before tick existed nothing
+	# called scan on a schedule and such a pane sat on the bar claiming to work
+	# for as long as you left it.
+	local pane
+	pane=$(fake_agent codex)
+	counts_only
+	corral report --pane "$pane" --agent codex --state working --source scan
+	assert_contains "$(corral status)" "●1" "starts out working"
+	tm set -p -t "$pane" @corral_state working
+	rm -f "$STATE/tick.stamp"
+	corral tick
+	assert_eq idle "$(pq "$pane" .state)" "tick scanned the pane and corrected it"
+	assert_empty "$(corral status)" "and the bar went quiet on its own"
+}
+
+# ===========================================================================
 # save / restore
 # ===========================================================================
 
@@ -817,6 +1041,19 @@ TESTS=(
 	scan_never_contradicts_a_live_hook
 	scan_dry_run_changes_nothing
 	scan_skips_panes_with_no_agent
+	rollup_is_empty_when_nothing_needs_you
+	rollup_counts_across_sessions_and_windows
+	rollup_merges_the_agents
+	rollup_splits_stale_out_of_working
+	rollup_names_the_target_when_one_or_two_are_waiting
+	rollup_draws_the_queue_as_badges_and_the_rest_flat
+	rollup_done_is_a_badge_too
+	blocked_never_goes_stale
+	rollup_push_writes_the_tmux_option
+	rollup_pushed_by_the_hook_on_a_transition
+	tick_throttles_itself
+	tick_prints_nothing_into_the_status_bar
+	tick_corrects_a_pane_no_hook_will_ever_speak_for
 	save_snapshots_the_resumable_panes
 	restore_dry_run_builds_the_resume_command
 	restore_dry_run_says_when_a_pane_is_not_free

@@ -224,8 +224,28 @@ set -g status-right "\
 #[fg=#22da6e]RPK #(~/.config/tmux/scripts/rpk.sh) "
 {{ end -}}
 
-set -g window-status-format "#[fg=#687686] #I:#W "
-set -g window-status-current-format "#[bg=#1d3b53,fg=#82aaff,bold] #I:#W "
+# The window list carries the same three glyphs as the rollup, so "2 things
+# need you" on the right has a "these two windows" to point at. It is a pure
+# format: every writer of pane state already rolls the loudest pane in a window
+# up into @corral_win_state, so this costs nothing on redraw and never polls.
+#
+# It answers "where" only inside the session you are looking at -- the window
+# list has no rows for the other sessions. `prefix + a` is the cross-session
+# answer, and the rollup is what tells you to go looking in the first place.
+#
+# Stale has no glyph here on purpose. @corral_win_state is written from raw pane
+# states by the hook's fast path, which has no clock to age them against; a pane
+# that reads "working" here may be stale, and the rollup is where that gets told
+# apart. One ● that is occasionally optimistic beats teaching the fast path to
+# do arithmetic on every transition.
+# Held in an option and read back with #{E:...}, which expands a value as a
+# format rather than printing it -- so the conditionals below are evaluated
+# against each window's own @corral_win_state, and the two window-status formats
+# share one definition instead of carrying a copy each. (tmux.conf has no shell
+# variables; "$foo" here would be an unknown command, not a substitution.)
+set -g @corral_win_glyph "#{?#{==:#{@corral_win_state},blocked},#[fg=#ef5350] ▲,}#{?#{==:#{@corral_win_state},done},#[fg=#22da6e] ✓,}#{?#{==:#{@corral_win_state},working},#[fg=#687686] ●,}"
+set -g window-status-format "#[fg=#687686] #I:#W#{E:@corral_win_glyph}#[default] "
+set -g window-status-current-format "#[bg=#1d3b53,fg=#82aaff,bold] #I:#W#{E:@corral_win_glyph}#[bg=#1d3b53,fg=#82aaff] "
 set -g window-status-separator ""
 
 # Window names. The stock automatic-rename-format is #{pane_current_command},
@@ -378,20 +398,54 @@ set-hook -g pane-focus-in 'run-shell -b "{{ .chezmoi.homeDir }}/.local/bin/corra
 # records outlive their panes. Reconcile both when a pane goes away.
 set-hook -g pane-exited 'run-shell -b "{{ .chezmoi.homeDir }}/.local/bin/corral refresh"'
 
-# No corral surface is enabled here on purpose: corral is the tracking layer,
-# `corral list --json` is its API, and the display is a separate decision.
-# Three that drop straight in when wanted:
+# --- the rollup: every agent on the server, in one segment -------------------
+# One line for the whole machine, not per-window -- the point of it is that you
+# do not have to be in the right window to know an agent wants you. It counts
+# panes, not agents by name: claude and codex land in the same buckets, because
+# what you act on is "something is blocked", not "a codex is blocked".
 #
-#   per-window glyph, zero polling -- the hook writes the option, the format
-#   reads it, nothing runs on redraw:
-#     set -g window-status-format "#[fg=#687686] #I:#W#{?#{==:#{@corral_win_state},blocked}, ▲,}#{?#{==:#{@corral_win_state},done}, ✓,}#{?#{==:#{@corral_win_state},working}, ●,} "
+#   ▲n  blocked, wants input      ●n  working
+#   ✓n  done and not looked at    ⚠n  stale: claims to be working, stopped
+#                                     reporting -- killed, or wedged
 #
-#   counts on the right, one process per status-interval:
-#     set -ag status-right "#(~/.local/bin/corral status) "
+# Idle is not shown, and the segment renders as nothing at all when no agent
+# needs you. The conditional below is what makes that true down to the
+# separator: an empty rollup must not leave a dangling "│" behind.
 #
-#   attention-ranked picker on the `prefix + a` slot vox used to own (rows come
-#   out of corral sorted blocked > done > working > idle; field 2 is the target):
-#     bind a display-popup -E -w 80% -h 70% "~/.local/bin/corral list --agents | fzf --reverse --header-lines=1 --preview '~/.config/tmux/scripts/peek-preview.sh {2}' --preview-window=down:60%,follow | awk '{print \$2}' | xargs -r tmux switch-client -t"
+# This is a plain format, not a #() job. Reading a tmux option costs no process
+# on redraw and updates the instant the option is written, for every attached
+# client at once; corral-hook writes it on the exact transition, so the bar
+# changes as the agent changes rather than up to status-interval later.
+set -ag status-right "#{?@corral_rollup,#[fg=#687686]│ #{@corral_rollup} ,}"
+
+# ...and the half that push cannot do. An agent that is killed mid-turn stops
+# sending events rather than sending a last one, and codex exposes only
+# SessionStart, so it can say who it is but never what it is doing. Both are
+# read off the pane by `corral scan`, which until now nothing ever called on a
+# schedule -- only the pane-exited hook above did, i.e. only when some *other*
+# pane happened to die, which is why a dead codex pane could sit on the bar
+# claiming to work for a day.
+#
+# The status bar is that schedule. tmux re-runs this job every status-interval,
+# which is far too often to scan panes, so `corral tick` throttles itself to
+# CORRAL_TICK_SECS (30s) and returns after one stamp-file read the rest of the
+# time. It prints nothing -- it exists for its effect on @corral_rollup, and
+# anything it did print would be printed into the status bar.
+set -ag status-right "#(~/.local/bin/corral tick)"
+
+# --- prefix + a: go to whatever needs you -----------------------------------
+# The rollup says something is waiting and the window glyph says which window,
+# but neither can point across sessions -- the window list only has rows for the
+# session you are in. This can: `corral list --agents` comes out sorted
+# blocked > done > working > idle, so the thing that needs you most is already
+# the row under the cursor when the popup opens.
+#
+# Field 2 is the target (session:window.pane), which is both what the preview
+# reads and what switch-client takes. --header-lines=1 keeps corral's column
+# header out of the selectable rows. `follow` pins the preview to the bottom of
+# the pane's output, so what you see is the prompt the agent is sitting on
+# rather than the top of its scrollback.
+bind a display-popup -E -w 80% -h 70% "~/.local/bin/corral list --agents | fzf --reverse --header-lines=1 --preview '~/.config/tmux/scripts/peek-preview.sh {2}' --preview-window=down:60%,follow | awk '{print \$2}' | xargs -r tmux switch-client -t"
 
 # Initialize TMUX plugin manager (keep this line at the very bottom of tmux.conf)
 run "$HOME/.config/tmux/plugins/tpm/tpm"

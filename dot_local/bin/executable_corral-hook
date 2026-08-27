@@ -231,4 +231,27 @@ for s in $(tmux list-panes -t "$pane" -F '#{@corral_state}' 2>/dev/null); do
 done
 tmux set -w -t "$pane" @corral_win_state "$best" 2>/dev/null || true
 
+# Push the server-wide rollup, so a status bar reading #{@corral_rollup} shows
+# this transition at the instant it happens instead of up to a status-interval
+# later. Only the counting is delegated -- the glyphs, the colours and the
+# stale/working split live in `corral` alone, and a second copy of them here
+# would be a second copy to keep in step.
+#
+# Detached through tmux rather than backgrounded with "&": this runs inside an
+# agent's hook, and a hook that leaves a process holding its stdout is a hook
+# that can stall the agent it is watching. run-shell -b hands it to the tmux
+# server and returns.
+#
+# Prefer the corral sitting next to this script: run-shell inherits the tmux
+# server's PATH rather than the agent's, and an installed pair should not be
+# separable by whatever that happens to be. But $0 is only a path when the
+# caller used one -- the agents' settings do, a shell resolving it on PATH does
+# not, and "${0%/*}" on a bare name expands to the name itself, which would ask
+# run-shell for "corral-hook/corral". Fall back to the plain name there.
+corral_bin=corral
+case $0 in
+	*/*) [ -x "${0%/*}/corral" ] && corral_bin=${0%/*}/corral ;;
+esac
+tmux run-shell -b "$corral_bin rollup" 2>/dev/null || true
+
 exit 0

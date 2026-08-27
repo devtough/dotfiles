@@ -38,8 +38,8 @@
 #       Coordinate-keyed snapshot, written from resurrect's post-save hook so it
 #       lines up exactly with the dump resurrect will replay.
 #
-# Subcommands: report list status seen refresh save restore gc doctor
-#              install-hooks
+# Subcommands: report list status rollup tick seen scan refresh save restore
+#              gc doctor install-hooks
 
 set -euo pipefail
 
@@ -71,6 +71,10 @@ CONFIG=${CORRAL_CONFIG:-$HOME/.config/corral/config.sh}
 # A pane claiming to be working with no hook event for this long is flagged
 # stale by readers: the agent was killed, or it is wedged.
 : "${CORRAL_STALE_SECS:=1800}"
+# How often `corral tick` is allowed to do real work. It is called from a status
+# bar job that fires every status-interval (5s here), which is the wrong cadence
+# for a scan; this is the one that matters.
+: "${CORRAL_TICK_SECS:=30}"
 : "${CORRAL_SNAPSHOT_KEEP:=20}"
 # Screen/title rules for agents that cannot report for themselves, and how much
 # of the screen `corral scan` reads.
@@ -172,8 +176,19 @@ inventory() {
 				# Stale means "the state on screen is probably a lie", so it keys off
 				# the last event received, not off how long the state has held: a
 				# genuinely long turn keeps reporting, a killed agent stops.
+				#
+				# Working only. Silence proves nothing about a blocked agent --
+				# being silent is what blocked *is*: the agent fired one
+				# Notification and there is nothing further for it to send until
+				# you answer it. Counting that as stale meant the longest-waiting,
+				# most urgent pane on the machine quietly reclassified itself as
+				# probably-dead at the CORRAL_STALE_SECS mark, which is exactly
+				# backwards. A blocked pane whose agent really did die is caught
+				# by `corral scan` reading the screen, or by `corral refresh`
+				# seeing a shell back in the foreground -- neither of which needs
+				# a timer to notice.
 				stale: ((.seen_at // .since) as $last
-					| if ($last and (.state == "working" or .state == "blocked"))
+					| if ($last and .state == "working")
 						then (($now - $last) > $stale) else false end)
 			}
 			| . + {state: (if .exited then null else .state end)}
@@ -353,6 +368,10 @@ refresh_window_state() {
 		((r > best_rank)) && { best_rank=$r; best=$s; }
 	done
 	tmux set -w -t "$pane" @corral_win_state "$best" 2>/dev/null || true
+	# Every pane-state writer already rolls its window up here, so this is the
+	# one place the server-wide rollup has to be hung off to stay in step with
+	# them -- report, seen and refresh all arrive through this function.
+	refresh_rollup
 	return 0
 }
 
@@ -410,20 +429,132 @@ cmd_list() {
 			+ (.cwd | sub("^" + env.HOME; "~")))' <<<"$inv"
 }
 
-cmd_status() {
-	# One line for status-right: counts by state, loudest first. The colours are
-	# tmux format escapes, so this drops straight into the status bar.
-	inventory | jq -r '
-		[.[] | select(.agent != null) | .state] as $s
-		| {blocked: ([$s[] | select(. == "blocked")] | length),
-		   done:    ([$s[] | select(. == "done")]    | length),
-		   working: ([$s[] | select(. == "working")] | length),
-		   idle:    ([$s[] | select(. == "idle")]    | length)}
-		| [ (if .blocked > 0 then "#[fg=#ef5350]▲\(.blocked)" else empty end),
-		    (if .done    > 0 then "#[fg=#22da6e]✓\(.done)"    else empty end),
-		    (if .working > 0 then "#[fg=#c5e478]●\(.working)" else empty end),
-		    (if .idle    > 0 then "#[fg=#687686]○\(.idle)"    else empty end) ]
+# ---------------------------------------------------------------------------
+# The rollup: every agent on the server, in one status-bar segment.
+#
+# Server-wide, not per-window — the point of it is that you do not have to be
+# looking at the right window to know an agent wants you. It counts panes, not
+# agents-by-name: claude and codex land in the same buckets, because what you
+# act on is "something is blocked", not "a codex is blocked".
+#
+# Two kinds of information live here, and they are not rendered alike.
+#
+#   The work queue — blocked and done — is what you act on. Blocked is an agent
+#   stalled on you; done is a turn that finished and has not been read (it
+#   clears on pane-focus-in, so the count is a genuine unread queue rather than
+#   a snapshot). These are drawn as filled blocks: dark text on a solid colour.
+#   A block is loud in a way a coloured glyph on the bar background is not, and
+#   that difference is the entire point of the segment.
+#
+#   The ambient counts — working, and stale — answer "is anything running", not
+#   "what should I do next". They stay flat and dim so they cannot compete.
+#
+# Idle is deliberately absent. It is the resting state of every pane that is not
+# doing anything, so it is almost always the largest number on the bar and it
+# never means "look at me". A segment that renders empty when nothing needs you
+# is the whole design, and one that always shows a number is one you stop
+# reading.
+#
+# Stale is split out of working rather than counted with it. A pane that claims
+# to be working with no event for CORRAL_STALE_SECS is a pane whose agent was
+# killed or is wedged, and folding those into the working count is how an
+# indicator earns a permanent phantom "1" that trains you to ignore it. It is
+# not queue work either — nothing is waiting on you — so it stays on the ambient
+# side, just louder than working.
+#
+# When one or two things are waiting, they are named rather than counted: a
+# count tells you something needs you, a target tells you where to go, and at
+# that size it fits. Past two the names would be wider than the rest of the bar
+# put together, so it falls back to counts and the picker (prefix + a) answers
+# "where" instead.
+# ---------------------------------------------------------------------------
+: "${CORRAL_ROLLUP_NAMED_MAX:=2}"
+
+rollup_line() {
+	inventory | jq -r --argjson named_max "$CORRAL_ROLLUP_NAMED_MAX" '
+		# A filled block: dark text on a solid colour, closed with a reset so
+		# the next thing on the bar is not wearing this background.
+		def badge($bg; $text): "#[bg=" + $bg + ",fg=#011627,bold] " + $text + " #[default]";
+		def dim($fg; $text): "#[fg=" + $fg + "]" + $text;
+
+		[.[] | select(.agent != null)] as $a
+		# Inventory is already sorted loudest-first, so blocked names come out
+		# ahead of done ones without sorting again here.
+		| [$a[] | select(.state == "blocked" or .state == "done")] as $queue
+		| ([$queue[] | select(.state == "blocked")] | length) as $blocked
+		| ([$queue[] | select(.state == "done")] | length) as $done
+		| ([$a[] | select(.state == "working" and (.stale | not))] | length) as $working
+		| ([$a[] | select(.stale)] | length) as $stale
+
+		| (if ($queue | length) == 0 then []
+		   elif ($queue | length) <= $named_max then
+			[$queue[]
+			 | if .state == "blocked" then badge("#ef5350"; "▲ " + .target)
+			   else badge("#22da6e"; "✓ " + .target) end]
+		   else
+			[(if $blocked > 0 then badge("#ef5350"; "▲\($blocked)") else empty end),
+			 (if $done    > 0 then badge("#22da6e"; "✓\($done)")    else empty end)]
+		   end) as $queue_out
+
+		| ($queue_out
+		   + [(if $working > 0 then dim("#687686"; "●\($working)") else empty end),
+		      (if $stale   > 0 then dim("#c792ea"; "⚠\($stale)")   else empty end)])
 		| if length == 0 then "" else join(" ") + "#[default]" end'
+}
+
+cmd_status() {
+	rollup_line
+}
+
+# Push the rollup into a server-global tmux option.
+#
+# Why an option and not a `#(corral status)` job: a format that reads
+# #{@corral_rollup} costs nothing on redraw and updates the instant the option
+# is set, for every attached client at once. A job costs a process per
+# status-interval and shows the change up to status-interval late. Since the
+# hook already knows the exact moment a state changes, the bar may as well be
+# told rather than left to ask.
+#
+# Every writer of pane state calls this, so the option and the pane options can
+# never disagree for longer than it takes to compute.
+refresh_rollup() {
+	have_tmux || return 0
+	local line
+	line=$(rollup_line 2>/dev/null) || line=""
+	tmux set -g @corral_rollup "$line" 2>/dev/null || true
+	return 0
+}
+
+cmd_rollup() { refresh_rollup; }
+
+# ---------------------------------------------------------------------------
+# tick: the correcting half of the rollup
+#
+# Push alone drifts. Hooks fire on transitions, and the two things that most
+# need showing on the bar have no transition to fire on: an agent that was
+# killed mid-turn stops sending events rather than sending a last one, and codex
+# exposes only SessionStart, so it can say who it is but never what it is doing.
+# Both are read off the pane by `corral scan` / `corral refresh`, and until now
+# nothing ever called them on a schedule -- only tmux's pane-exited hook did,
+# which is to say only when some *other* pane happened to die.
+#
+# The status bar is that schedule. tmux re-runs a #() job every status-interval,
+# which is far more often than a scan is worth doing, so the throttle lives here
+# rather than in the format: below CORRAL_TICK_SECS this returns after one stamp
+# file read. Output is swallowed on purpose -- whatever this prints would be
+# printed *into the status bar*.
+# ---------------------------------------------------------------------------
+cmd_tick() {
+	have_tmux || return 0
+	mkdir -p "$STATE_DIR" 2>/dev/null || true
+	local stamp=$STATE_DIR/tick.stamp now last=0
+	now=$(date +%s)
+	[[ -r $stamp ]] && { read -r last <"$stamp" 2>/dev/null || last=0; }
+	[[ $last =~ ^[0-9]+$ ]] || last=0
+	((now - last < CORRAL_TICK_SECS)) && return 0
+	printf '%s\n' "$now" >"$stamp" 2>/dev/null || true
+	cmd_refresh >/dev/null 2>&1 || true
+	return 0
 }
 
 # Looking at a pane that finished clears its "done, unseen" badge. Wired to
@@ -552,6 +683,9 @@ cmd_refresh() {
 	# Agents that cannot report for themselves get read off the pane here.
 	cmd_scan
 	cmd_gc
+	# Unconditionally, not only when a pane changed: staleness is a function of
+	# elapsed time, so a rollup can go out of date with nothing having happened.
+	refresh_rollup
 }
 
 cmd_gc() {
@@ -797,6 +931,24 @@ cmd_doctor() {
 		fi
 	done
 
+	# The rollup needs both halves present to be trustworthy, and each fails
+	# quietly on its own: without the format the option is written to nobody,
+	# and without the tick job the bar shows only what hooks happen to report,
+	# so a killed agent and every codex pane go stale on screen with nothing to
+	# say so.
+	local sr
+	sr=$(tmux show-option -gqv status-right 2>/dev/null || echo "")
+	if [[ $sr == *@corral_rollup* && $sr == *"corral tick"* ]]; then
+		printf '  %s status bar: rollup + tick (every %ss)\n' "$ok" "$CORRAL_TICK_SECS"
+	elif [[ $sr == *@corral_rollup* ]]; then
+		printf '  %s status-right shows the rollup but nothing calls `corral tick` —\n' "$warn"
+		printf '      dead agents and codex panes will not correct themselves\n'
+	elif [[ $sr == *corral* ]]; then
+		printf '  %s status-right calls corral but does not read #{@corral_rollup}\n' "$warn"
+	else
+		printf '  %s status-right shows no rollup (see the corral block in tmux.conf)\n' "$warn"
+	fi
+
 	if [[ -r $CORRAL_RULES ]]; then
 		printf '  %s scan rules: %s agents in %s\n' "$ok" \
 			"$(jq -r '.agents | keys | join(", ")' "$CORRAL_RULES" 2>/dev/null)" "$CORRAL_RULES"
@@ -876,7 +1028,9 @@ usage() {
 corral — what is running in every tmux pane, and how to get the agents back.
 
   corral list [--json] [--agents]   inventory of every pane (JSON is the API)
-  corral status                     one-line summary for the tmux status bar
+  corral status                     one-line rollup of every agent on the server
+  corral rollup                     push that rollup into @corral_rollup
+  corral tick                       throttled scan + rollup, for a status job
   corral report --pane %7 --agent X --state working [--detail ...]
                                     ingest point for any state writer
   corral seen [pane]                clear a pane's "done, unseen" badge
@@ -901,6 +1055,8 @@ main() {
 		report) cmd_report "$@" ;;
 		list) cmd_list "$@" ;;
 		status) cmd_status "$@" ;;
+		rollup) cmd_rollup "$@" ;;
+		tick) cmd_tick "$@" ;;
 		seen) cmd_seen "$@" ;;
 		scan) cmd_scan "$@" ;;
 		refresh) cmd_refresh "$@" ;;
