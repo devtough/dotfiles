@@ -49,11 +49,15 @@ resurrect's dump describe the same instant. `last` symlinks to the newest.
 
 ## States
 
-    ▲ blocked   agent is waiting on you (permission prompt, question)
     ✓ done      turn finished, not looked at yet — cleared by being seen
+    ▲ blocked   agent is waiting on you (permission prompt, question)
     ● working   prompt submitted, or tools running
     ■ idle      session alive, nothing in flight
     ·           no agent, or state unknown
+
+Everywhere a state is drawn — the strip, the window list, the picker — it wears
+the same glyph and the same colour: green ✓, red ▲, bright ●, grey ■, purple ⚠
+(picker rows show a stale pane as ⚠ directly).
 
 "Seen" is any of three things: focusing the pane (`pane-focus-in`), the pane
 being on screen at the moment the turn ends (the hook writes idle instead of
@@ -71,9 +75,11 @@ mapping both to blocked pins a finished pane at blocked forever, because
 nothing else fires until you type. corral classifies on the message text and
 lets the second kind pass through without touching the state.
 
-Ranking is `blocked > done > working > idle`, which is the order `corral list`
-sorts in: the loudest thing is always the top row, and the order the rollup
-renders its counts in.
+Ranking is `done > blocked > working > stale > idle` — the same order the
+rollup strip renders (`✓ ▲ ● ⚠ ■`), so the picker and the bar read the same
+way, and the top row of `corral list` is the top of that order. Within a state,
+longest-held sorts first; idle flips that, because there recency is relevance —
+the session you used an hour ago belongs above the one parked for five days.
 
 Two timestamps, answering different questions. `@corral_since` is when the state
 last changed, and it is what the AGE column shows — "working for 40 minutes".
@@ -220,9 +226,9 @@ cover different ground:
                       already rolls the loudest pane in a window up into
                       @corral_win_state. Only covers the session you are in.
 
-    the picker        popup over `corral list --agents`, which is already
-                      sorted blocked > done > working > idle, so the loudest
-                      pane is under the cursor when it opens. Previews the pane
+    the picker        popup over `corral list --agents`, already sorted in
+                      strip order (see "States"), so the loudest pane is
+                      under the cursor when it opens. Previews the pane
                       before you jump. Crosses sessions, which the window list
                       cannot. Opened by `prefix + a`, or by clicking the strip
                       itself — the #[range=user|corral] markers around the

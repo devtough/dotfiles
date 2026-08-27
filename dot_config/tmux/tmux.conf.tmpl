@@ -245,7 +245,7 @@ set -g status-right "\
 # against each window's own @corral_win_state, and the two window-status formats
 # share one definition instead of carrying a copy each. (tmux.conf has no shell
 # variables; "$foo" here would be an unknown command, not a substitution.)
-set -g @corral_win_glyph "#{?#{==:#{@corral_win_state},blocked},#[fg=#ef5350] ▲,}#{?#{==:#{@corral_win_state},done},#[fg=#22da6e] ✓,}#{?#{==:#{@corral_win_state},working},#[fg=#687686] ●,}"
+set -g @corral_win_glyph "#{?#{==:#{@corral_win_state},blocked},#[fg=#ef5350] ▲,}#{?#{==:#{@corral_win_state},done},#[fg=#22da6e] ✓,}#{?#{==:#{@corral_win_state},working},#[fg=#d6deeb] ●,}"
 set -g window-status-format "#[fg=#687686] #I:#W#{E:@corral_win_glyph}#[default] "
 set -g window-status-current-format "#[bg=#1d3b53,fg=#82aaff,bold] #I:#W#{E:@corral_win_glyph}#[bg=#1d3b53,fg=#82aaff] "
 set -g window-status-separator ""

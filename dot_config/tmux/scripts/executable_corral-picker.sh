@@ -5,9 +5,10 @@
 # #[range=user|corral] markers corral wraps the strip in are what make the
 # click resolvable to "that was the strip").
 #
-# Rows come out of `corral list --agents` sorted blocked > done > working >
-# idle, so the thing that needs you most is already under the cursor when the
-# popup opens. Field 2 is the target (session:window.pane): what the preview
+# Rows come out of `corral list --agents` in the strip order -- done, blocked,
+# working, stale, then idle sorted most-recently-active first -- with the
+# strip colours on the glyphs (--ansi is what renders them). The row under
+# the cursor when the popup opens is the top of that order. Field 2 is the target (session:window.pane): what the preview
 # reads and what switch-client takes. --header-lines=1 keeps corral's column
 # header out of the selectable rows. The preview goes through peek-preview.sh
 # for the same reason the window pickers do: it trims the blank rows
@@ -17,7 +18,7 @@
 set -u
 
 target=$("$HOME/.local/bin/corral" list --agents |
-    fzf --reverse --header-lines=1 \
+    fzf --ansi --reverse --header-lines=1 \
         --preview "$HOME/.config/tmux/scripts/peek-preview.sh {2}" \
         --preview-window=down:60%,follow |
     awk '{print $2}')

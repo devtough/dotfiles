@@ -120,7 +120,11 @@ inventory() {
 		--argjson records "$records" \
 		--argjson now "$now" \
 		--argjson stale "$CORRAL_STALE_SECS" '
-		def rank($s): {"blocked":4,"done":3,"working":2,"idle":1,"starting":1}[$s // ""] // 0;
+		# The order of the rollup strip -- ✓ ▲ ● (⚠) ■ -- so the picker and the
+		# bar read the same way. Stale outranks idle but sits below live
+		# working panes; its rank is applied where stale is computed, since it
+		# is a flag on working, not a state of its own.
+		def rank($s): {"done":5,"blocked":4,"working":3,"idle":1,"starting":1}[$s // ""] // 0;
 		def is_shell($c): ($c | test("^-?(zsh|bash|sh|fish|dash|ksh|login)$"));
 		# Claude Code publishes what it is working on as the pane title, behind
 		# its own marker glyph; strip the marker, keep the sentence.
@@ -192,9 +196,15 @@ inventory() {
 						then (($now - $last) > $stale) else false end)
 			}
 			| . + {state: (if .exited then null else .state end)}
-			| . + {rank: (if .exited then 0 else rank(.state) end)}
+			| . + {rank: (if .exited then 0 elif .stale then 2 else rank(.state) end)}
 		)
-		| sort_by(-.rank, (.since // 9999999999), .target)'
+		# Within a state, longest-held first -- the blocked pane that has waited
+		# all morning belongs above the one from a minute ago. Idle flips that:
+		# there recency is relevance, so the session you used an hour ago sorts
+		# above the one parked for five days.
+		| sort_by(-.rank,
+			(if .state == "idle" then -(.since // 0) else (.since // 9999999999) end),
+			.target)'
 }
 
 # ---------------------------------------------------------------------------
@@ -402,6 +412,10 @@ cmd_list() {
 			| if (length < $n) then . + (" " * ($n - length))
 			  else .[0:$n - 1] + " " end;
 		def glyph($s): {"blocked":"▲","done":"✓","working":"●","idle":"■","starting":"◌"}[$s // ""] // "·";
+		# The strip colours, as ANSI truecolor (the picker passes --ansi):
+		# green done, red blocked, bright working, purple stale, grey the rest.
+		def paint($c; $t): "\u001b[38;2;" + $c + "m" + $t + "\u001b[0m";
+		def gcolor($s): {"blocked":"239;83;80","done":"34;218;110","working":"214;222;235"}[$s // ""] // "104;118;134";
 		def humanage($a):
 			if $a == null then "-"
 			elif $a < 60 then "\($a)s"
@@ -418,7 +432,8 @@ cmd_list() {
 			| (.[0] | pad(2)) + (.[1] | pad($tw)) + (.[2] | pad(8)) + (.[3] | pad(10))
 			+ (.[4] | pad(6)) + (.[5] | pad(44)) + .[6]),
 		($rows[] |
-			(glyph(.state) | pad(2))
+			(if .stale then paint("199;146;234"; ("⚠" | pad(2)))
+			 else paint(gcolor(.state); (glyph(.state) | pad(2))) end)
 			+ (.target | pad($tw))
 			+ ((.agent // "-") | pad(8))
 			+ (((.state // "-")

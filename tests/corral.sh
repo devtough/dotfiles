@@ -170,6 +170,14 @@ run_test() {
 	[[ -n $FILTER && $name != *$FILTER* ]] && return 0
 	TEST_OK=1
 	printf '  %s\n' "$name"
+	# A TESTS entry with no function behind it must be a failure, not a silent
+	# pass -- a rename that misses the registry otherwise retires the test while
+	# the count stays green.
+	if ! declare -F "test_$name" >/dev/null; then
+		fail "no such test function: test_$name"
+		FAIL=$((FAIL + 1)); FAILED_NAMES+=("$name")
+		return 0
+	fi
 	setup
 	"test_$name"
 	teardown
@@ -630,7 +638,28 @@ test_rollup_keeps_a_fixed_shape() {
 	line=$(corral status)
 	assert_not_contains "$line" ":" "no targets, even with only two waiting"
 	stripped=$(printf '%s' "$line" | sed 's/#\[[^]]*\]//g')
-	assert_eq "$stripped" " ✓1  ▲1  ●1 ■3" "every slot present, in order"
+	# Badges carry a space either side of their text; dim slots do not.
+	assert_eq " ✓1   ▲1  ●1 ■3" "$stripped" "every slot present, in order"
+}
+
+test_list_sorts_in_strip_order() {
+	# The picker reads like the strip: ✓ ▲ ● ■. Within idle the most recently
+	# active session sorts first -- recency is relevance there, unlike blocked,
+	# where the longest wait is the most urgent.
+	local a b c d now
+	a=$(fake_agent codex); b=$(fake_agent 2.1.238); c=$(fake_agent gemini); d=$(fake_agent codex)
+	now=$(date +%s)
+	corral report --pane "$a" --agent codex --state blocked
+	corral report --pane "$b" --agent claude --state done
+	corral report --pane "$c" --agent gemini --state idle
+	corral report --pane "$d" --agent codex --state idle
+	tm set -p -t "$c" @corral_since "$((now - 500))"
+	tm set -p -t "$d" @corral_since "$((now - 50))"
+	assert_eq "done,blocked,idle,idle" \
+		"$(q '[.[] | select(.agent != null) | .state] | join(",")')" \
+		"done first, blocked second, idle last"
+	assert_eq "$d" "$(q '[.[] | select(.state == "idle")][0].pane_id')" \
+		"the fresher idle sorts first"
 }
 
 test_rollup_draws_the_queue_as_badges_and_the_rest_flat() {
@@ -1036,11 +1065,12 @@ TESTS=(
 	scan_never_contradicts_a_live_hook
 	scan_dry_run_changes_nothing
 	scan_skips_panes_with_no_agent
-	rollup_is_empty_when_nothing_needs_you
+	rollup_shows_zeros_when_nothing_needs_you
 	rollup_counts_across_sessions_and_windows
 	rollup_merges_the_agents
 	rollup_splits_stale_out_of_working
-	rollup_names_the_target_when_one_or_two_are_waiting
+	rollup_keeps_a_fixed_shape
+	list_sorts_in_strip_order
 	rollup_draws_the_queue_as_badges_and_the_rest_flat
 	rollup_done_is_a_badge_too
 	blocked_never_goes_stale
