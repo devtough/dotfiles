@@ -50,10 +50,16 @@ resurrect's dump describe the same instant. `last` symlinks to the newest.
 ## States
 
     ▲ blocked   agent is waiting on you (permission prompt, question)
-    ✓ done      turn finished, not looked at yet — clears on pane-focus-in
+    ✓ done      turn finished, not looked at yet — cleared by being seen
     ● working   prompt submitted, or tools running
-    ○ idle      session alive, nothing in flight
+    ■ idle      session alive, nothing in flight
     ·           no agent, or state unknown
+
+"Seen" is any of three things: focusing the pane (`pane-focus-in`), the pane
+being on screen at the moment the turn ends (the hook writes idle instead of
+done — a finish you watched happen was never unread), or the refresh sweep
+noticing a done pane is visible, which catches the cases with no hook to fire:
+switching into the window onto a sibling pane, or attaching the session.
 
 A `~` after the state means corral inferred it from the pane rather than
 hearing it from the agent (see below); a `!` means the state is stale, which
@@ -214,11 +220,15 @@ cover different ground:
                       already rolls the loudest pane in a window up into
                       @corral_win_state. Only covers the session you are in.
 
-    prefix + a        popup picker over `corral list --agents`, which is already
+    the picker        popup over `corral list --agents`, which is already
                       sorted blocked > done > working > idle, so the loudest
                       pane is under the cursor when it opens. Previews the pane
                       before you jump. Crosses sessions, which the window list
-                      cannot.
+                      cannot. Opened by `prefix + a`, or by clicking the strip
+                      itself — the #[range=user|corral] markers around the
+                      strip are what let the status-line mouse binding tell a
+                      click on the strip from a click on CPU/RAM. Rows carry
+                      the same glyphs as the strip (■ marks idle).
 
 The window glyph has no `⚠`: `@corral_win_state` is written by the hook's fast
 path, which has no clock to age states against. A window reading `●` may be

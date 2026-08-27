@@ -401,7 +401,7 @@ cmd_list() {
 		def pad($n): (. // "") | tostring
 			| if (length < $n) then . + (" " * ($n - length))
 			  else .[0:$n - 1] + " " end;
-		def glyph($s): {"blocked":"▲","done":"✓","working":"●","idle":"○","starting":"◌"}[$s // ""] // "·";
+		def glyph($s): {"blocked":"▲","done":"✓","working":"●","idle":"■","starting":"◌"}[$s // ""] // "·";
 		def humanage($a):
 			if $a == null then "-"
 			elif $a < 60 then "\($a)s"
@@ -489,7 +489,7 @@ rollup_line() {
 		   (if $working > 0 then dim("#d6deeb"; "●\($working)")   else dim("#687686"; "●0") end),
 		   (if $stale   > 0 then dim("#c792ea"; "⚠\($stale)")     else empty end),
 		   dim("#687686"; "■\($a | length)")]
-		| join(" ") + "#[default]"'
+		| "#[range=user|corral]" + join(" ") + "#[default]#[norange]"'
 }
 
 cmd_status() {
@@ -673,6 +673,15 @@ cmd_refresh() {
 	# Agents that cannot report for themselves get read off the pane here.
 	cmd_scan
 	cmd_gc
+	# A done you can see is a done you have read. The hook already refuses to
+	# set done on a pane that is on screen, and pane-focus-in clears it when
+	# you land in the pane itself -- but switching into the window onto a
+	# *sibling* pane, or attaching the session, puts a done on screen with no
+	# hook firing for it. The sweep catches those on the tick cadence.
+	local vis
+	while IFS=$'\t' read -r pane state vis; do
+		[[ $state == done && $vis == 1 ]] && cmd_seen "$pane"
+	done < <(tmux list-panes -a -F $'#{pane_id}\t#{@corral_state}\t#{&&:#{session_attached},#{&&:#{window_active},#{?#{window_zoomed_flag},#{pane_active},1}}}' 2>/dev/null)
 	# Unconditionally, not only when a pane changed: staleness is a function of
 	# elapsed time, so a rollup can go out of date with nothing having happened.
 	refresh_rollup

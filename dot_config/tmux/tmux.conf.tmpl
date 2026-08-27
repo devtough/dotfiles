@@ -438,19 +438,27 @@ set-hook -g pane-exited 'run-shell -b "{{ .chezmoi.homeDir }}/.local/bin/corral 
 # anything it did print would be printed into the status bar.
 set -ag status-right "#(~/.local/bin/corral tick)"
 
-# --- prefix + a: go to whatever needs you -----------------------------------
+# --- the agents picker: prefix + a, or click the strip -----------------------
 # The rollup says something is waiting and the window glyph says which window,
 # but neither can point across sessions -- the window list only has rows for the
-# session you are in. This can: `corral list --agents` comes out sorted
-# blocked > done > working > idle, so the thing that needs you most is already
-# the row under the cursor when the popup opens.
+# session you are in. The picker can; scripts/corral-picker.sh holds the fzf
+# pipeline (row format, preview, and why), and two bindings open it. Both wear
+# the same @popup_open guard as the window pickers above.
 #
-# Field 2 is the target (session:window.pane), which is both what the preview
-# reads and what switch-client takes. --header-lines=1 keeps corral's column
-# header out of the selectable rows. `follow` pins the preview to the bottom of
-# the pane's output, so what you see is the prompt the agent is sitting on
-# rather than the top of its scrollback.
-bind a display-popup -E -w 80% -h 70% "~/.local/bin/corral list --agents | fzf --reverse --header-lines=1 --preview '~/.config/tmux/scripts/peek-preview.sh {2}' --preview-window=down:60%,follow | awk '{print \$2}' | xargs -r tmux switch-client -t"
+# The mouse binding fires for a click anywhere on status-right, so it checks
+# which named range the click landed in: corral wraps the strip in
+# #[range=user|corral], and a click on CPU/RAM resolves to a different range
+# and falls through to nothing.
+bind a if-shell -F '#{@popup_open}' {
+    display-message 'a popup is already open'
+} {
+    set -g @popup_open 1
+    display-popup -E -w 80% -h 70% "~/.config/tmux/scripts/corral-picker.sh ; tmux set -g @popup_open 0"
+}
+bind -n MouseDown1StatusRight if-shell -F '#{&&:#{==:#{mouse_status_range},user|corral},#{!=:#{@popup_open},1}}' {
+    set -g @popup_open 1
+    display-popup -E -w 80% -h 70% "~/.config/tmux/scripts/corral-picker.sh ; tmux set -g @popup_open 0"
+}
 
 # Initialize TMUX plugin manager (keep this line at the very bottom of tmux.conf)
 run "$HOME/.config/tmux/plugins/tpm/tpm"

@@ -173,8 +173,20 @@ esac
 # from an agent that was killed mid-tool-call, and readers would flag every real
 # 40-minute turn as stale. It is refreshed at most once a minute so a chatty turn
 # still costs one tmux round trip per event, not two.
-prev=$(tmux display-message -p -t "$pane" '#{@corral_state}|#{@corral_seen_at}|#{@corral_session}' 2>/dev/null) || exit 0
+# The fourth field is "is this pane on screen right now": its session has a
+# client attached, its window is that session's current one, and it is not
+# hidden behind a zoomed sibling. tmux computes it inside the same round trip.
+prev=$(tmux display-message -p -t "$pane" '#{@corral_state}|#{@corral_seen_at}|#{@corral_session}|#{&&:#{session_attached},#{&&:#{window_active},#{?#{window_zoomed_flag},#{pane_active},1}}}' 2>/dev/null) || exit 0
 now=$(date +%s)
+vis=${prev##*|}
+prev=${prev%|*}
+
+# A done you can watch happen is not unread. "Done" exists to be the badge for
+# a turn that finished where you were not looking; when the pane is on screen
+# as the turn ends, the pane itself is the notification, so the state goes
+# straight to idle and the ✓ never counts it. A finish anywhere else keeps
+# done, and pane-focus-in (or the refresh sweep) clears it when you arrive.
+[ "$state" = done ] && [ "$vis" = 1 ] && state=idle
 
 # Same round trip, third field: has this pane got an identity yet? If not, the
 # event in hand is carrying one, and a pane with no session id is a pane that

@@ -520,6 +520,8 @@ test_rollup_shows_zeros_when_nothing_needs_you() {
 	assert_contains "$line" "●0" "working shows its zero"
 	assert_contains "$line" "■2" "and idle agents still land in the total"
 	assert_not_contains "$line" "⚠" "the anomaly flag alone stays hidden at zero"
+	assert_contains "$line" "#[range=user|corral]" \
+		"the strip is a named mouse range, so a status-line click can find it"
 }
 
 test_rollup_counts_across_sessions_and_windows() {
