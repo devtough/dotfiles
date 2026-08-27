@@ -30,6 +30,25 @@ vim.keymap.set("n", "<C-h>", ss("move_cursor_left"), { desc = "Go to Left Window
 vim.keymap.set("n", "<C-j>", ss("move_cursor_down"), { desc = "Go to Lower Window" })
 vim.keymap.set("n", "<C-k>", ss("move_cursor_up"), { desc = "Go to Upper Window" })
 vim.keymap.set("n", "<C-l>", ss("move_cursor_right"), { desc = "Go to Right Window" })
+-- ...and from insert mode too. <C-h> in insert mode is Vi's legacy alias for
+-- backspace; that is deliberately given up here (ghostty sends DEL for the
+-- Backspace key, and nvim sees the two as distinct, so Backspace is unaffected).
+--
+-- stopinsert first, on purpose: crossing into another window or herdr pane
+-- while still in insert mode means the next thing typed lands in a buffer you
+-- were not looking at. Normal mode on arrival is the safe landing.
+local function ss_insert(fn)
+  return function()
+    vim.cmd("stopinsert")
+    require("smart-splits")[fn]()
+  end
+end
+
+vim.keymap.set("i", "<C-h>", ss_insert("move_cursor_left"), { desc = "Go to Left Window" })
+vim.keymap.set("i", "<C-j>", ss_insert("move_cursor_down"), { desc = "Go to Lower Window" })
+vim.keymap.set("i", "<C-k>", ss_insert("move_cursor_up"), { desc = "Go to Upper Window" })
+vim.keymap.set("i", "<C-l>", ss_insert("move_cursor_right"), { desc = "Go to Right Window" })
+
 -- swap buffers between windows
 vim.keymap.set("n", "<leader><leader>h", ss("swap_buf_left"), { desc = "Swap Buffer Left" })
 vim.keymap.set("n", "<leader><leader>j", ss("swap_buf_down"), { desc = "Swap Buffer Down" })
